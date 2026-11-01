@@ -1,0 +1,141 @@
+import {
+  listProjects, getProject, saveProject, deleteProject, newProject, countPhotos,
+  exportProject, importProject, requestPersistence, isPersisted,
+} from './db.js';
+import { openEditor, planThumbnail } from './editor.js';
+import { openPhotos } from './photos.js';
+import { renderHelp } from './help.js';
+import { summarize, fmtArea } from './geometry.js';
+import { esc } from './ui.js';
+
+const app = document.getElementById('app');
+let closeScreen = null;
+let cameFromApp = false;   // для кнопки «Назад» в справке
+
+export function toast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toast.t);
+  toast.t = setTimeout(() => el.classList.remove('show'), 2600);
+}
+
+function isIos() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+function isStandalone() {
+  return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+}
+
+async function renderList() {
+  const projects = await listProjects();
+  const counts = await Promise.all(projects.map((p) => countPhotos(p.id)));
+  const persisted = await isPersisted();
+  const showInstall = isIos() && !isStandalone();
+
+  app.innerHTML = `
+    <main class="list-screen">
+      <div class="brand"><img src="icons/icon.svg" alt=""><h1>Метраж</h1>
+        <a class="btn ghost help-btn" href="#/help" title="Как это работает" aria-label="Как это работает">?</a></div>
+      <p class="tagline">Планировки и фото объектов прямо на телефоне. Всё хранится только на этом устройстве.
+        <a href="#/help">Как это работает</a></p>
+      ${showInstall ? `<div class="notice"><b>Добавьте на экран «Домой»</b>
+        Нажмите «Поделиться» → «На экран Домой». Так приложение работает без интернета, а Safari не удалит ваши объекты.</div>` : ''}
+      ${!persisted && !showInstall ? `<div class="notice"><b>Данные хранятся в браузере</b>
+        Иногда браузер может очистить их сам. Делайте резервную копию важных объектов кнопкой «Копия».</div>` : ''}
+      <div class="actions">
+        <button class="btn primary" id="new">+ Новый объект</button>
+        <label class="btn">Загрузить копию<input type="file" id="import" accept=".json,application/json" hidden></label>
+      </div>
+      ${projects.length ? `<div class="cards">${projects.map((p, i) => card(p, counts[i])).join('')}</div>`
+        : `<div class="empty">Пока нет объектов. Создайте первый, нарисуйте планировку и добавьте фото.</div>`}
+    </main>`;
+
+  app.querySelector('#new').onclick = async () => {
+    const p = newProject();
+    await saveProject(p);
+    requestPersistence();
+    location.hash = `#/p/${p.id}`;
+  };
+  app.querySelector('#import').onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const p = await importProject(file);
+      toast(`Загружено: ${p.name}`);
+      renderList();
+    } catch (err) {
+      toast(err.message || 'Не удалось прочитать файл');
+    }
+  };
+  app.querySelectorAll('[data-open]').forEach((b) => { b.onclick = () => { location.hash = `#/p/${b.dataset.open}`; }; });
+  app.querySelectorAll('[data-export]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      try { await exportProject(projects.find((p) => p.id === b.dataset.export)); } finally { b.disabled = false; }
+    };
+  });
+  app.querySelectorAll('[data-delete]').forEach((b) => {
+    b.onclick = async () => {
+      const p = projects.find((x) => x.id === b.dataset.delete);
+      if (!confirm(`Удалить «${p.name}» вместе с фото? Это нельзя отменить.`)) return;
+      await deleteProject(p.id);
+      renderList();
+    };
+  });
+}
+
+function card(p, photoCount) {
+  const s = summarize(p.plan.rooms);
+  const parts = [];
+  if (p.plan.rooms.length) parts.push(`${s.livingCount ? `${s.livingCount}-комн., ` : ''}${fmtArea(s.total)} м²`);
+  if (photoCount) parts.push(`${photoCount} фото`);
+  if (!parts.length) parts.push('Пустой объект');
+  parts.push(new Date(p.updatedAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' }));
+  return `
+    <article class="card">
+      <button class="card-open" data-open="${p.id}" aria-label="Открыть ${esc(p.name)}">
+        ${planThumbnail(p.plan)}
+        <div class="card-body">
+          <p class="card-title">${esc(p.name)}</p>
+          <div class="card-meta">${parts.join(' · ')}</div>
+        </div>
+      </button>
+      <div class="card-foot">
+        <a class="btn ghost" href="#/p/${p.id}/photos">Фото</a>
+        <button class="btn ghost" data-export="${p.id}">Копия</button>
+        <button class="btn ghost danger" data-delete="${p.id}">Удалить</button>
+      </div>
+    </article>`;
+}
+
+async function renderProject(id, tab) {
+  const project = await getProject(id);
+  if (!project) { location.hash = '#/'; return; }
+  const opts = { onSave: (p) => saveProject(p), toast };
+  closeScreen = tab === 'photos' ? openPhotos(app, project, opts) : openEditor(app, project, opts);
+}
+
+async function route() {
+  if (closeScreen) { await closeScreen(); closeScreen = null; }
+  const hash = location.hash;
+  let m;
+  if ((m = hash.match(/^#\/p\/([^/]+)(?:\/(photos))?$/))) {
+    renderProject(decodeURIComponent(m[1]), m[2]);
+  } else if ((m = hash.match(/^#\/help(?:\/(\w+))?$/))) {
+    renderHelp(app, m[1]);
+    const back = app.querySelector('.help-screen > a');
+    if (cameFromApp) back.onclick = (e) => { e.preventDefault(); history.back(); };
+    back.textContent = cameFromApp ? '← Назад' : '← Объекты';
+  } else {
+    renderList();
+  }
+  cameFromApp = true;
+}
+
+window.addEventListener('hashchange', route);
+route();
+
+if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}

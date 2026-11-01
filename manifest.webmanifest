@@ -1,0 +1,17 @@
+{
+  "name": "Метраж — планировки и презентации объектов",
+  "short_name": "Метраж",
+  "description": "Планировки, фото и презентации объектов недвижимости прямо на телефоне. Данные не покидают устройство.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f4efe6",
+  "theme_color": "#1f5f5b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
