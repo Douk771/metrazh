@@ -151,7 +151,11 @@ export async function exportProject(project) {
   const packed = await Promise.all(photos.map(async (p) => ({
     ...p, blob: await blobToDataUrl(p.blob), thumb: await blobToDataUrl(p.thumb),
   })));
-  const payload = { format: 'metrazh-project', version: 2, project, photos: packed };
+  // Подложка (фото плана БТИ) лежит в объекте как Blob — в JSON кладём её строкой.
+  const packedProject = project.underlay?.blob
+    ? { ...project, underlay: { ...project.underlay, blob: await blobToDataUrl(project.underlay.blob) } }
+    : project;
+  const payload = { format: 'metrazh-project', version: 2, project: packedProject, photos: packed };
   const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
   downloadBlob(blob, `${safeName(project.name)}.metrazh.json`);
 }
@@ -164,6 +168,11 @@ export async function importProject(file) {
   }
   // Новый id, чтобы импорт никогда не затирал существующий объект.
   const project = { ...newProject(p.name), ...p, id: uid() };
+  if (typeof project.underlay?.blob === 'string') {
+    project.underlay = { ...project.underlay, blob: await dataUrlToBlob(project.underlay.blob) };
+  } else if (project.underlay && !(project.underlay.blob instanceof Blob)) {
+    delete project.underlay;
+  }
   await saveProject(project);
   if (Array.isArray(data.photos) && data.photos.length) {
     const photos = await Promise.all(data.photos.map(async (ph) => ({

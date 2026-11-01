@@ -5,6 +5,7 @@ import {
 import { openEditor, planThumbnail } from './editor.js';
 import { openPhotos } from './photos.js';
 import { openPresentation } from './presentation.js';
+import { openListing } from './listing.js';
 import { renderHelp } from './help.js';
 import { summarize, fmtArea } from './geometry.js';
 import { esc } from './ui.js';
@@ -115,7 +116,7 @@ async function renderProject(id, tab) {
   const project = await getProject(id);
   if (!project) { location.hash = '#/'; return; }
   const opts = { onSave: (p) => saveProject(p), toast };
-  const open = { photos: openPhotos, pdf: openPresentation }[tab] || openEditor;
+  const open = { photos: openPhotos, pdf: openPresentation, listing: openListing }[tab] || openEditor;
   closeScreen = open(app, project, opts);
 }
 
@@ -123,7 +124,7 @@ async function route() {
   if (closeScreen) { await closeScreen(); closeScreen = null; }
   const hash = location.hash;
   let m;
-  if ((m = hash.match(/^#\/p\/([^/]+)(?:\/(photos|pdf))?$/))) {
+  if ((m = hash.match(/^#\/p\/([^/]+)(?:\/(photos|pdf|listing))?$/))) {
     renderProject(decodeURIComponent(m[1]), m[2]);
   } else if ((m = hash.match(/^#\/help(?:\/(\w+))?$/))) {
     renderHelp(app, m[1]);

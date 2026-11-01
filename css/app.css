@@ -264,3 +264,25 @@ a.btn { text-decoration: none; color: inherit; }
   .pages { grid-template-columns: repeat(2, 1fr); gap: 10px; }
   .tabs a { padding: 6px 7px; }
 }
+
+/* ---------- Экран «Текст» ---------- */
+.listing-main { width: 100%; max-width: 760px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-b)); }
+.listing-card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; margin-bottom: 12px; }
+.listing-card h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin: 0 0 8px; }
+.listing-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.listing-head h2 { margin: 0; }
+.listing-card textarea, .listing-title {
+  width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff;
+  font: inherit; line-height: 1.5; resize: vertical; margin-bottom: 8px;
+}
+.listing-title { min-height: 44px; font-weight: 600; }
+.listing-foot { display: flex; justify-content: space-between; align-items: center; }
+.help-section ol { padding-left: 22px; margin: 6px 0; }
+.help-section ol li { margin: 6px 0; }
+
+/* Телефон: вкладки объекта — второй строкой на всю ширину. */
+@media (max-width: 760px) {
+  .topbar { flex-wrap: wrap; row-gap: 6px; }
+  .topbar .tabs { order: 10; flex: 1 0 100%; }
+  .topbar .tabs a { flex: 1; text-align: center; padding: 7px 4px; }
+}

@@ -5,6 +5,7 @@ import {
   edgeLength, fmtArea, fmtLen, summarize, roomArea,
 } from './geometry.js';
 import { uid } from './db.js';
+import { renderPhoto } from './watermark.js';
 import { topbar, bindTopbar } from './ui.js';
 import { OPENING_TYPES, openingsMarkup, openingMarkup, nearestEdge, snapT } from './openings.js';
 
@@ -60,6 +61,9 @@ export function openEditor(root, project, { onSave, toast }) {
   let selectedId = null;
   let selectedOpening = null;
   let ghost = null;        // где встанет дверь/окно (превью под курсором)
+  let calib = null;        // точки калибровки масштаба подложки
+  let underlayUrl = project.underlay?.blob ? URL.createObjectURL(project.underlay.blob) : null;
+  const underlayOn = () => !!(underlayUrl && project.underlay.visible !== false);
   let view = { x: 0, y: 0, s: 1 };
   let draft = null;        // точки строящегося контура
   let hover = null;        // точка под курсором (для превью)
@@ -159,6 +163,10 @@ export function openEditor(root, project, { onSave, toast }) {
     const r = svg.getBoundingClientRect();
     if (!r.width || !r.height) return;
     const all = plan.rooms.flatMap((x) => x.points);
+    if (underlayOn()) {
+      const u = project.underlay;
+      all.push([u.x, u.y], [u.x + u.w * u.scale, u.y + u.h * u.scale]);
+    }
     const b = all.length ? bounds(all) : { minX: 0, minY: 0, maxX: 800, maxY: 600 };
     const pad = plan.wallCm + 80;
     const w = b.maxX - b.minX + pad * 2, h = b.maxY - b.minY + pad * 2;
@@ -193,8 +201,15 @@ export function openEditor(root, project, { onSave, toast }) {
       </pattern></defs>
       <rect x="${view.x}" y="${view.y}" width="${r.width / s}" height="${r.height / s}" fill="url(#grid)"/>`;
 
+    if (underlayOn()) {
+      const u = project.underlay;
+      html += `<image href="${underlayUrl}" x="${u.x}" y="${u.y}" width="${u.w * u.scale}" height="${u.h * u.scale}"
+        opacity="${u.opacity ?? 0.6}" preserveAspectRatio="none" pointer-events="none"/>`;
+      html += '<g opacity=".72">';
+    }
     html += wallsAndFills(plan, (room) => `data-room="${room.id}" style="cursor:${tool === 'select' ? 'move' : 'crosshair'}"`,
       (o) => ({ selected: o.id === selectedOpening, attrs: tool === 'select' ? `data-opening="${o.id}" style="cursor:ew-resize"` : '' }));
+    if (underlayOn()) html += '</g>';
     if (ghost) html += openingMarkup(plan, ghost, { ghost: true });
 
     // подписи комнат
@@ -263,6 +278,14 @@ export function openEditor(root, project, { onSave, toast }) {
       html += `<circle cx="${hover[0]}" cy="${hover[1]}" r="${px(4)}" fill="#1f5f5b"/>`;
     }
 
+    if (calib?.length) {
+      const [a, b] = calib;
+      if (b) html += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#d9822b" stroke-width="${px(3)}"/>`;
+      for (const p of calib) {
+        html += `<circle cx="${p[0]}" cy="${p[1]}" r="${px(7)}" fill="#fff" stroke="#d9822b" stroke-width="${px(3)}"/>`;
+      }
+    }
+
     world.setAttribute('transform', `matrix(${s} 0 0 ${s} ${-view.x * s} ${-view.y * s})`);
     world.innerHTML = html;
 
@@ -278,6 +301,9 @@ export function openEditor(root, project, { onSave, toast }) {
     if (tool === 'poly') {
       if (!draft) return 'Нажимайте по очереди на углы комнаты';
       return draft.length >= 3 ? 'Нажмите на первую точку или «Готово», чтобы замкнуть' : 'Следующий угол…';
+    }
+    if (tool === 'calib') {
+      return calib?.length ? 'Теперь нажмите на другой конец этой стены' : 'Нажмите на один конец стены, длину которой знаете';
     }
     if (tool === 'door' || tool === 'window') {
       return plan.rooms.length ? `Нажмите на стену, где должно быть ${tool === 'door' ? 'дверь' : 'окно'}` : 'Сначала нарисуйте комнату';
@@ -340,6 +366,20 @@ export function openEditor(root, project, { onSave, toast }) {
         </button></li>`).join('')}</ul>`
         : '<p class="muted">Комнат пока нет. Выберите «Комната» внизу и проведите по экрану.</p>'}
 
+      <h2>Подложка: план БТИ</h2>
+      ${underlayUrl ? `
+        <label class="check"><input type="checkbox" id="u-on" ${project.underlay.visible !== false ? 'checked' : ''}> Показывать</label>
+        <label class="field">Яркость подложки<input type="range" id="u-op" min="15" max="100" value="${Math.round((project.underlay.opacity ?? 0.6) * 100)}"></label>
+        <div class="row">
+          <button class="btn" id="u-calib">Задать масштаб</button>
+          <button class="btn danger" id="u-del">Убрать</button>
+        </div>
+        <p class="muted">Обведите комнаты поверх плана инструментами «Комната» и «Контур».</p>
+      ` : `
+        <p class="muted">Сфотографируйте план из техпаспорта ровно сверху — он ляжет под чертёж, и комнаты останется обвести.</p>
+        <label class="btn">Загрузить фото плана<input type="file" id="u-file" accept="image/*" hidden></label>
+      `}
+
       <h2>Объект</h2>
       <label class="field">Адрес<input id="p-addr" value="${esc(project.address)}" placeholder="Город, улица, дом"></label>
       <label class="field">Толщина стен на чертеже, см<input id="p-wall" type="number" inputmode="numeric" min="4" max="60" step="1" value="${plan.wallCm}"></label>
@@ -387,6 +427,26 @@ export function openEditor(root, project, { onSave, toast }) {
       };
       $('#r-del').onclick = () => deleteSelected();
     }
+    if (underlayUrl) {
+      $('#u-on').onchange = (e) => { project.underlay.visible = e.target.checked; scheduleSave(); render(); };
+      $('#u-op').oninput = (e) => { project.underlay.opacity = Number(e.target.value) / 100; scheduleSave(); render(); };
+      $('#u-calib').onclick = () => { setTool('calib'); editorEl.classList.remove('sheet-open'); };
+      $('#u-del').onclick = () => {
+        if (!confirm('Убрать подложку? Нарисованные комнаты останутся.')) return;
+        URL.revokeObjectURL(underlayUrl);
+        underlayUrl = null;
+        delete project.underlay;
+        if (tool === 'calib') setTool('select');
+        scheduleSave();
+        renderAll();
+      };
+    } else {
+      $('#u-file').onchange = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        try { await setUnderlay(file); } catch { toast?.('Не удалось открыть изображение'); }
+      };
+    }
     $('#p-addr').onchange = (e) => { project.address = e.target.value.trim(); scheduleSave(); };
     $('#p-wall').onchange = (e) => {
       const v = Math.round(Number(e.target.value));
@@ -424,6 +484,48 @@ export function openEditor(root, project, { onSave, toast }) {
     const o = { id: uid(), type, ...at, width: OPENING_TYPES[type].width, swing: 'in', hinge: 'a' };
     change(() => { plan.openings.push(o); selectedOpening = o.id; selectedId = null; });
   }
+  async function setUnderlay(file) {
+    const { blob, w, h } = await renderPhoto(file, { maxSide: 2400, quality: 0.9 });
+    const r = svg.getBoundingClientRect();
+    // Примерный масштаб: длинная сторона плана ≈ 12 м. Точный задаётся калибровкой.
+    const scale = 1200 / Math.max(w, h);
+    const [cx, cy] = toWorld(r.left + r.width / 2, r.top + r.height / 2);
+    project.underlay = { blob, w, h, scale, x: cx - (w * scale) / 2, y: cy - (h * scale) / 2, opacity: 0.6, visible: true };
+    underlayUrl = URL.createObjectURL(blob);
+    scheduleSave();
+    userMovedView = false;
+    fit();
+    setTool('calib');
+    editorEl.classList.remove('sheet-open');
+    toast?.('Теперь задайте масштаб по одной стене');
+  }
+  function calibrateTap(p) {
+    calib = [...(calib || []), p];
+    if (calib.length < 2) { render(); return; }
+    render();
+    const [a, b] = calib;
+    const dist = edgeLength(a, b);
+    // Даём браузеру дорисовать отрезок, прежде чем спросить длину.
+    setTimeout(() => {
+      const answer = prompt('Длина этой стены по плану, в метрах (например, 3,2):');
+      const meters = parseFloat(String(answer || '').replace(',', '.'));
+      calib = null;
+      if (meters > 0 && dist > 1) {
+        const u = project.underlay;
+        const k = (meters * 100) / dist;
+        u.scale *= k;
+        u.x = a[0] - (a[0] - u.x) * k;
+        u.y = a[1] - (a[1] - u.y) * k;
+        scheduleSave();
+        userMovedView = false;
+        setTool('select');
+        fit();
+        toast?.('Масштаб задан — обводите комнаты');
+      } else {
+        render();
+      }
+    }, 50);
+  }
   function finishDraft() {
     if (draft && draft.length >= 3) addRoom(draft);
     draft = null;
@@ -433,6 +535,7 @@ export function openEditor(root, project, { onSave, toast }) {
     if (t !== 'poly') draft = null;
     tool = t;
     ghost = null;
+    calib = null;
     if (t !== 'select') { selectedId = null; selectedOpening = null; }
     renderAll();
   }
@@ -492,7 +595,7 @@ export function openEditor(root, project, { onSave, toast }) {
     } else if (tool === 'rect') {
       const p = snapPt(w);
       gesture = { ...base, type: 'rect', start: p, end: p };
-    } else if (tool === 'poly' || tool === 'door' || tool === 'window') {
+    } else if (tool === 'poly' || tool === 'door' || tool === 'window' || tool === 'calib') {
       gesture = { ...base, type: 'tap', vx: view.x, vy: view.y };
     }
   });
@@ -501,7 +604,7 @@ export function openEditor(root, project, { onSave, toast }) {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const w = toWorld(e.clientX, e.clientY);
     const placing = tool === 'door' || tool === 'window';
-    if (e.pointerType === 'mouse' || gesture) hover = tool === 'select' || placing ? null : snapPt(w);
+    if (e.pointerType === 'mouse' || gesture) hover = tool === 'select' || tool === 'calib' || placing ? null : snapPt(w);
     if (placing && e.pointerType === 'mouse' && !gesture) {
       const at = edgeAt(w);
       ghost = at && { type: tool, ...at, width: OPENING_TYPES[tool].width, swing: 'in', hinge: 'a' };
@@ -576,6 +679,8 @@ export function openEditor(root, project, { onSave, toast }) {
 
     if (g.type === 'move' || g.type === 'vertex' || g.type === 'opening') {
       commit();
+    } else if (g.type === 'tap' && !g.moved && tool === 'calib') {
+      calibrateTap(toWorld(e.clientX, e.clientY));
     } else if (g.type === 'tap' && !g.moved && (tool === 'door' || tool === 'window')) {
       const at = edgeAt(toWorld(e.clientX, e.clientY));
       if (at) addOpening(tool, at);
@@ -628,7 +733,7 @@ export function openEditor(root, project, { onSave, toast }) {
     } else if (typing) {
       if (e.key === 'Enter') document.activeElement.blur();
     } else if (e.key === 'Escape') {
-      if (draft) { draft = null; render(); } else { selectedId = null; selectedOpening = null; renderAll(); }
+      if (tool === 'calib') { setTool('select'); } else if (draft) { draft = null; render(); } else { selectedId = null; selectedOpening = null; renderAll(); }
     } else if (e.key === 'Enter' && draft) {
       finishDraft();
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedId || selectedOpening)) {
@@ -661,5 +766,6 @@ export function openEditor(root, project, { onSave, toast }) {
     document.removeEventListener('keydown', onKey);
     ro.disconnect();
     if (saveTimer) await flush();
+    if (underlayUrl) URL.revokeObjectURL(underlayUrl);
   };
 }
