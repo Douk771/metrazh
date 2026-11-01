@@ -302,3 +302,4 @@ a.btn { text-decoration: none; color: inherit; }
   .photo figcaption { flex-wrap: wrap; padding-left: 8px; }
   .photo-btns .btn { min-width: 30px; padding: 0 5px; }
 }
+.btn.wide { width: 100%; margin-bottom: 8px; }

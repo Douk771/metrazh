@@ -5,7 +5,8 @@ import {
   edgeLength, fmtArea, fmtLen, summarize, roomArea,
 } from './geometry.js';
 import { uid } from './db.js';
-import { renderPhoto } from './watermark.js';
+import { renderPhoto, loadBitmap, canvasToBlob } from './watermark.js';
+import { detectRooms, estimateSkew } from './scan.js';
 import { topbar, bindTopbar } from './ui.js';
 import { OPENING_TYPES, openingsMarkup, openingMarkup, nearestEdge, snapT } from './openings.js';
 
@@ -441,11 +442,12 @@ export function openEditor(root, project, { onSave, toast }) {
       ${underlayUrl ? `
         <label class="check"><input type="checkbox" id="u-on" ${project.underlay.visible !== false ? 'checked' : ''}> Показывать</label>
         <label class="field">Яркость подложки<input type="range" id="u-op" min="15" max="100" value="${Math.round((project.underlay.opacity ?? 0.6) * 100)}"></label>
+        <button class="btn primary wide" id="u-scan">Распознать комнаты автоматически</button>
         <div class="row">
           <button class="btn" id="u-calib">Задать масштаб</button>
           <button class="btn danger" id="u-del">Убрать</button>
         </div>
-        <p class="muted">Обведите комнаты поверх плана инструментами «Комната» и «Контур».</p>
+        <p class="muted">Или обведите комнаты сами поверх плана инструментами «Комната» и «Контур».</p>
       ` : `
         <p class="muted">Сфотографируйте план из техпаспорта ровно сверху — он ляжет под чертёж, и комнаты останется обвести.</p>
         <label class="btn">Загрузить фото плана<input type="file" id="u-file" accept="image/*" hidden></label>
@@ -502,6 +504,7 @@ export function openEditor(root, project, { onSave, toast }) {
       $('#u-on').onchange = (e) => { project.underlay.visible = e.target.checked; scheduleSave(); render(); };
       $('#u-op').oninput = (e) => { project.underlay.opacity = Number(e.target.value) / 100; scheduleSave(); render(); };
       $('#u-calib').onclick = () => { setTool('calib'); editorEl.classList.remove('sheet-open'); };
+      $('#u-scan').onclick = () => scanUnderlay();
       $('#u-del').onclick = () => {
         if (!confirm('Убрать подложку? Нарисованные комнаты останутся.')) return;
         URL.revokeObjectURL(underlayUrl);
@@ -570,6 +573,93 @@ export function openEditor(root, project, { onSave, toast }) {
     editorEl.classList.remove('sheet-open');
     toast?.('Теперь задайте масштаб по одной стене');
   }
+  // Автоматическое распознавание комнат по подложке. Результат — обычные комнаты, их можно править.
+  let scanning = false;
+  async function scanUnderlay() {
+    const u = project.underlay;
+    if (!u || scanning) return;
+    if (!u.calibrated) {
+      toast?.('Сначала задайте масштаб: нажмите на концы известной стены');
+      setTool('calib');
+      editorEl.classList.remove('sheet-open');
+      return;
+    }
+    if (plan.rooms.length && !confirm('Заменить нарисованные комнаты распознанными? Вернуть можно кнопкой ↶.')) return;
+    scanning = true;
+    editorEl.classList.remove('sheet-open');
+    toast?.('Распознаю план…');
+    await new Promise((r) => setTimeout(r, 30));
+    try {
+      // Рабочее разрешение: 1,5–3 см на пиксель — хватает для стен и быстро считается.
+      const c = Math.max(u.scale, (Math.max(u.w, u.h) * u.scale) / 1000, 1.5);
+      const W = Math.round((u.w * u.scale) / c), H = Math.round((u.h * u.scale) / c);
+      const grayOf = (src) => {
+        const cv = document.createElement('canvas');
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, W, H);
+        ctx.drawImage(src, 0, 0, W, H);
+        const d = ctx.getImageData(0, 0, W, H).data;
+        const g = new Uint8Array(W * H);
+        for (let i = 0; i < g.length; i++) g[i] = (d[i * 4] * 299 + d[i * 4 + 1] * 587 + d[i * 4 + 2] * 114) / 1000;
+        return g;
+      };
+      let bmp = await loadBitmap(u.blob);
+      let gray = grayOf(bmp);
+
+      // Выравниваем наклон фото прямо в подложке — так и обводить вручную удобнее.
+      const skew = estimateSkew(gray, W, H, c);
+      if (Math.abs(skew) > 0.15) {
+        const cv = document.createElement('canvas');
+        cv.width = u.w; cv.height = u.h;
+        const ctx = cv.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, u.w, u.h);
+        ctx.translate(u.w / 2, u.h / 2);
+        ctx.rotate((skew * Math.PI) / 180);
+        ctx.drawImage(bmp, -u.w / 2, -u.h / 2);
+        bmp.close?.();
+        u.blob = await canvasToBlob(cv, 'image/jpeg', 0.9);
+        URL.revokeObjectURL(underlayUrl);
+        underlayUrl = URL.createObjectURL(u.blob);
+        bmp = cv;
+        gray = grayOf(cv);
+      }
+      bmp.close?.();
+
+      const found = detectRooms(gray, W, H, c, u.x, u.y);
+      if (!found.length) {
+        toast?.('Комнаты не нашлись — обведите их вручную');
+        render();
+        return;
+      }
+      // Тип угадываем по размеру и форме — риелтор проверит и поправит.
+      const guessType = (pts) => {
+        const b = bounds(pts), a = roomArea({ points: pts });
+        const short = Math.min(b.maxX - b.minX, b.maxY - b.minY), long = Math.max(b.maxX - b.minX, b.maxY - b.minY);
+        if (a < 2.8) return 'wc';
+        if (a < 5) return 'bath';
+        if (short <= 160 && long / short >= 2.5) return 'hall';
+        return 'room';
+      };
+      change(() => {
+        plan.rooms = found.map((r) => ({ id: uid(), type: guessType(r.points), name: '', points: r.points }));
+        plan.openings = [];
+        selectedId = null;
+        selectedOpening = null;
+      });
+      scheduleSave();
+      userMovedView = false;
+      fit();
+      toast?.(`Найдено помещений: ${found.length}. Проверьте границы и типы комнат`);
+    } catch (e) {
+      toast?.('Не получилось распознать — обведите комнаты вручную');
+    } finally {
+      scanning = false;
+    }
+  }
+
   function calibrateTap(p) {
     calib = [...(calib || []), p];
     if (calib.length < 2) { render(); return; }
@@ -587,6 +677,7 @@ export function openEditor(root, project, { onSave, toast }) {
         u.scale *= k;
         u.x = a[0] - (a[0] - u.x) * k;
         u.y = a[1] - (a[1] - u.y) * k;
+        u.calibrated = true;
         scheduleSave();
         userMovedView = false;
         setTool('select');
