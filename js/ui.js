@@ -5,7 +5,7 @@ export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&a
 // Верхняя панель объекта: назад, название, вкладки «План / Фото», справка.
 export function topbar(project, active, extra = '') {
   const id = encodeURIComponent(project.id);
-  const help = active === 'photos' ? 'photos' : 'plan';
+  const help = active;
   return `
     <header class="topbar">
       <a class="btn ghost" href="#/" aria-label="К списку объектов">← <span class="btn-label">Объекты</span></a>
@@ -13,6 +13,7 @@ export function topbar(project, active, extra = '') {
       <nav class="tabs" aria-label="Разделы объекта">
         <a href="#/p/${id}" ${active === 'plan' ? 'aria-current="page"' : ''}>План</a>
         <a href="#/p/${id}/photos" ${active === 'photos' ? 'aria-current="page"' : ''}>Фото</a>
+        <a href="#/p/${id}/pdf" ${active === 'pdf' ? 'aria-current="page"' : ''}>PDF</a>
       </nav>
       <a class="btn ghost help-btn" href="#/help/${help}" title="Как это работает" aria-label="Как это работает">?</a>
       ${extra}

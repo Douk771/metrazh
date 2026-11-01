@@ -230,3 +230,32 @@ a.btn { text-decoration: none; color: inherit; }
   .tabs a { padding: 6px 9px; font-size: 14px; }
   .topbar .name { font-size: 15px; padding: 6px 4px; }
 }
+
+/* ---------- Экран PDF ---------- */
+.pdf-main {
+  width: 100%; max-width: 1180px; margin: 0 auto; padding: 16px 16px calc(32px + var(--safe-b));
+  display: grid; grid-template-columns: 360px 1fr; gap: 24px; align-items: start;
+}
+.pdf-form { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; position: sticky; top: 76px; }
+.pdf-form h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-2); margin: 18px 0 8px; }
+.pdf-form h2:first-child { margin-top: 0; }
+.pdf-form .muted { margin: 0 0 10px; }
+.field textarea {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+  width: 100%; resize: vertical; font: inherit; line-height: 1.45;
+}
+.pdf-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 8px; }
+.pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.page { margin: 0; }
+.page canvas {
+  display: block; width: 100%; height: auto; background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 6px 20px rgba(0,0,0,.08); border-radius: 2px;
+}
+.page figcaption { text-align: center; font-size: 13px; color: var(--ink-2); margin-top: 6px; }
+
+@media (max-width: 760px) {
+  .pdf-main { grid-template-columns: 1fr; padding-top: 12px; }
+  .pdf-form { position: static; }
+  .pages { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .tabs a { padding: 6px 7px; }
+}

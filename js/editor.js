@@ -34,6 +34,24 @@ export function planThumbnail(plan) {
   return `<svg class="thumb" viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${wallsAndFills(plan)}</svg>`;
 }
 
+// Самостоятельный SVG плана с подписями — для PDF. Возвращает { svg, width, height } в см.
+export function planSvg(plan) {
+  if (!plan.rooms.length) return null;
+  const b = bounds(plan.rooms.flatMap((r) => r.points));
+  const pad = plan.wallCm + 20;
+  const w = b.maxX - b.minX + pad * 2, h = b.maxY - b.minY + pad * 2;
+  const fs = Math.max(w, h) / 38;
+  const labels = plan.rooms.map((room) => {
+    const [cx, cy] = centroid(room.points);
+    return `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
+      font-size="${fs}" fill="#1d2321"><tspan x="${cx}" dy="${-fs * 0.15}">${esc(roomName(room))}</tspan>
+      <tspan x="${cx}" dy="${fs * 1.2}" font-weight="700">${fmtArea(roomArea(room))} м²</tspan></text>`;
+  }).join('');
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.minX - pad} ${b.minY - pad} ${w} ${h}"
+    width="${w}" height="${h}">${wallsAndFills(plan)}${labels}</svg>`;
+  return { svg, width: w, height: h };
+}
+
 export function openEditor(root, project, { onSave, toast }) {
   const plan = project.plan;
   let tool = 'select';

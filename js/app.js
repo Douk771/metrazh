@@ -4,6 +4,7 @@ import {
 } from './db.js';
 import { openEditor, planThumbnail } from './editor.js';
 import { openPhotos } from './photos.js';
+import { openPresentation } from './presentation.js';
 import { renderHelp } from './help.js';
 import { summarize, fmtArea } from './geometry.js';
 import { esc } from './ui.js';
@@ -103,6 +104,7 @@ function card(p, photoCount) {
       </button>
       <div class="card-foot">
         <a class="btn ghost" href="#/p/${p.id}/photos">Фото</a>
+        <a class="btn ghost" href="#/p/${p.id}/pdf">PDF</a>
         <button class="btn ghost" data-export="${p.id}">Копия</button>
         <button class="btn ghost danger" data-delete="${p.id}">Удалить</button>
       </div>
@@ -113,14 +115,15 @@ async function renderProject(id, tab) {
   const project = await getProject(id);
   if (!project) { location.hash = '#/'; return; }
   const opts = { onSave: (p) => saveProject(p), toast };
-  closeScreen = tab === 'photos' ? openPhotos(app, project, opts) : openEditor(app, project, opts);
+  const open = { photos: openPhotos, pdf: openPresentation }[tab] || openEditor;
+  closeScreen = open(app, project, opts);
 }
 
 async function route() {
   if (closeScreen) { await closeScreen(); closeScreen = null; }
   const hash = location.hash;
   let m;
-  if ((m = hash.match(/^#\/p\/([^/]+)(?:\/(photos))?$/))) {
+  if ((m = hash.match(/^#\/p\/([^/]+)(?:\/(photos|pdf))?$/))) {
     renderProject(decodeURIComponent(m[1]), m[2]);
   } else if ((m = hash.match(/^#\/help(?:\/(\w+))?$/))) {
     renderHelp(app, m[1]);
