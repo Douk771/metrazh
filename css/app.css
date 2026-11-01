@@ -91,7 +91,10 @@ button, input, select { font: inherit; color: inherit; }
   display: flex; gap: 4px; padding: 4px; background: var(--card); border: 1px solid var(--line);
   border-radius: 14px; box-shadow: 0 4px 18px rgba(0,0,0,.08); max-width: calc(100% - 24px); overflow-x: auto;
 }
-.tools .btn { border-color: transparent; min-width: 40px; padding: 0 10px; }
+.tools .btn { border-color: transparent; min-width: 40px; padding: 0 10px; flex: none; }
+.tools.side-tools {
+  left: auto; right: 12px; transform: none; bottom: auto; top: 12px; flex-direction: column;
+}
 .tools .sep { width: 1px; background: var(--line); margin: 4px 2px; flex: none; }
 .hint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
@@ -150,7 +153,9 @@ button, input, select { font: inherit; color: inherit; }
   }
   .editor.sheet-open .panel { transform: translateY(0); }
   .tools { bottom: calc(12px + var(--safe-b)); gap: 2px; }
-  .tools .btn { padding: 0 8px; min-width: 34px; font-size: 15px; }
+  .tools .btn { padding: 0 7px; min-width: 34px; font-size: 14px; }
+  .tools.side-tools { top: 10px; right: 8px; bottom: auto; }
+  .hint { top: auto; bottom: calc(70px + var(--safe-b)); }
   .topbar { gap: 4px; padding-left: 6px; padding-right: 8px; }
   .topbar .btn { padding: 0 10px; }
   .topbar .btn-label { display: none; }

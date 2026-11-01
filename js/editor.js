@@ -6,6 +6,7 @@ import {
 } from './geometry.js';
 import { uid } from './db.js';
 import { topbar, bindTopbar } from './ui.js';
+import { OPENING_TYPES, openingsMarkup, openingMarkup, nearestEdge, snapT } from './openings.js';
 
 const STEP = 10;              // шаг привязки, см
 const MIN_ROOM = 30;          // меньше — считаем случайным касанием, см
@@ -18,12 +19,12 @@ const pts = (points) => points.map((p) => p.join(',')).join(' ');
 const typeOf = (room) => ROOM_TYPES[room.type] || ROOM_TYPES.room;
 const roomName = (room) => room.name || typeOf(room).short;
 
-function wallsAndFills(plan, attrs = () => '') {
+function wallsAndFills(plan, attrs = () => '', openingOpts) {
   const walls = plan.rooms.map((r) =>
     `<polygon points="${pts(r.points)}" fill="none" stroke="#2b2f2d" stroke-width="${plan.wallCm * 2}" stroke-linejoin="miter"/>`).join('');
   const fills = plan.rooms.map((r) =>
     `<polygon points="${pts(r.points)}" fill="${typeOf(r).fill}" ${attrs(r)}/>`).join('');
-  return walls + fills;
+  return walls + fills + openingsMarkup(plan, openingOpts);
 }
 
 export function planThumbnail(plan) {
@@ -54,8 +55,11 @@ export function planSvg(plan) {
 
 export function openEditor(root, project, { onSave, toast }) {
   const plan = project.plan;
+  plan.openings ??= [];
   let tool = 'select';
   let selectedId = null;
+  let selectedOpening = null;
+  let ghost = null;        // где встанет дверь/окно (превью под курсором)
   let view = { x: 0, y: 0, s: 1 };
   let draft = null;        // точки строящегося контура
   let hover = null;        // точка под курсором (для превью)
@@ -77,8 +81,11 @@ export function openEditor(root, project, { onSave, toast }) {
           <button class="btn" data-tool="select" title="Выбрать и двигать">Выбор</button>
           <button class="btn" data-tool="rect" title="Прямоугольная комната">Комната</button>
           <button class="btn" data-tool="poly" title="Комната произвольной формы">Контур</button>
+          <button class="btn" data-tool="door" title="Поставить дверь на стену">Дверь</button>
+          <button class="btn" data-tool="window" title="Поставить окно на стену">Окно</button>
           <button class="btn primary" id="finish" hidden>Готово</button>
-          <span class="sep"></span>
+        </div>
+        <div class="tools side-tools" role="toolbar" aria-label="История и вид">
           <button class="btn" id="undo" title="Отменить (Ctrl+Z)" aria-label="Отменить">↶</button>
           <button class="btn" id="redo" title="Вернуть (Ctrl+Shift+Z)" aria-label="Вернуть">↷</button>
           <button class="btn" id="fit" title="Показать весь план" aria-label="Показать весь план">⤢</button>
@@ -95,12 +102,14 @@ export function openEditor(root, project, { onSave, toast }) {
   const hint = $('#hint');
 
   // ---------- сохранение и история ----------
-  const snapshot = () => JSON.stringify({ rooms: plan.rooms, wallCm: plan.wallCm });
+  const snapshot = () => JSON.stringify({ rooms: plan.rooms, openings: plan.openings, wallCm: plan.wallCm });
   function restore(json) {
     const s = JSON.parse(json);
     plan.rooms = s.rooms;
+    plan.openings = s.openings || [];
     plan.wallCm = s.wallCm;
     if (!plan.rooms.some((r) => r.id === selectedId)) selectedId = null;
+    if (!plan.openings.some((o) => o.id === selectedOpening)) selectedOpening = null;
   }
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -184,7 +193,9 @@ export function openEditor(root, project, { onSave, toast }) {
       </pattern></defs>
       <rect x="${view.x}" y="${view.y}" width="${r.width / s}" height="${r.height / s}" fill="url(#grid)"/>`;
 
-    html += wallsAndFills(plan, (room) => `data-room="${room.id}" style="cursor:${tool === 'select' ? 'move' : 'crosshair'}"`);
+    html += wallsAndFills(plan, (room) => `data-room="${room.id}" style="cursor:${tool === 'select' ? 'move' : 'crosshair'}"`,
+      (o) => ({ selected: o.id === selectedOpening, attrs: tool === 'select' ? `data-opening="${o.id}" style="cursor:ew-resize"` : '' }));
+    if (ghost) html += openingMarkup(plan, ghost, { ghost: true });
 
     // подписи комнат
     const fs = px(13);
@@ -268,6 +279,9 @@ export function openEditor(root, project, { onSave, toast }) {
       if (!draft) return 'Нажимайте по очереди на углы комнаты';
       return draft.length >= 3 ? 'Нажмите на первую точку или «Готово», чтобы замкнуть' : 'Следующий угол…';
     }
+    if (tool === 'door' || tool === 'window') {
+      return plan.rooms.length ? `Нажмите на стену, где должно быть ${tool === 'door' ? 'дверь' : 'окно'}` : 'Сначала нарисуйте комнату';
+    }
     if (!plan.rooms.length) return 'Начните с инструмента «Комната»';
     return '';
   }
@@ -280,7 +294,20 @@ export function openEditor(root, project, { onSave, toast }) {
     const typeOptions = (cur) => Object.entries(ROOM_TYPES)
       .map(([k, t]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${t.label}</option>`).join('');
 
+    const op = plan.openings.find((o) => o.id === selectedOpening);
     panel.innerHTML = `
+      ${op ? `
+        <h2>${OPENING_TYPES[op.type]?.label || 'Проём'}</h2>
+        <label class="field">Тип<select id="o-type">${Object.entries(OPENING_TYPES)
+          .map(([k, t]) => `<option value="${k}" ${k === op.type ? 'selected' : ''}>${t.label}</option>`).join('')}</select></label>
+        <label class="field">Ширина, см<input id="o-w" type="number" inputmode="numeric" min="30" max="400" step="5" value="${op.width}"></label>
+        ${op.type === 'door' ? `<div class="row">
+          <button class="btn" id="o-swing" title="Открывается ${op.swing === 'out' ? 'наружу' : 'внутрь'} комнаты">${op.swing === 'out' ? 'Наружу' : 'Внутрь'} ⇅</button>
+          <button class="btn" id="o-hinge">Петли ⇄</button>
+        </div>` : ''}
+        <p class="muted">Чтобы сдвинуть, потяните ${op.type === 'window' ? 'окно' : 'дверь'} вдоль стены или на другую стену.</p>
+        <div class="row"><button class="btn danger" id="o-del">Удалить</button></div>
+      ` : ''}
       ${sel ? `
         <h2>Выбранная комната</h2>
         <label class="field">Тип<select id="r-type">${typeOptions(sel.type)}</select></label>
@@ -319,8 +346,24 @@ export function openEditor(root, project, { onSave, toast }) {
       <p class="muted">Площадь считается по внутреннему контуру комнаты, как в техпаспорте. Стены рисуются снаружи и в площадь не входят.</p>`;
 
     panel.querySelectorAll('[data-pick]').forEach((b) => {
-      b.onclick = () => { selectedId = b.dataset.pick; tool = 'select'; renderAll(); };
+      b.onclick = () => { selectedId = b.dataset.pick; selectedOpening = null; tool = 'select'; renderAll(); };
     });
+    if (op) {
+      $('#o-type').onchange = (e) => change(() => {
+        const was = OPENING_TYPES[op.type];
+        op.type = e.target.value;
+        if (op.width === was?.width) op.width = OPENING_TYPES[op.type].width;
+      });
+      $('#o-w').onchange = (e) => {
+        const v = Math.round(Number(e.target.value));
+        if (v >= 30 && v <= 400) change(() => { op.width = v; }); else renderPanel();
+      };
+      if (op.type === 'door') {
+        $('#o-swing').onclick = () => change(() => { op.swing = op.swing === 'out' ? 'in' : 'out'; });
+        $('#o-hinge').onclick = () => change(() => { op.hinge = op.hinge === 'b' ? 'a' : 'b'; });
+      }
+      $('#o-del').onclick = () => deleteSelected();
+    }
     if (sel) {
       $('#r-type').onchange = (e) => change(() => { sel.type = e.target.value; });
       $('#r-name').oninput = (e) => { sel.name = e.target.value.trim(); render(); };
@@ -361,8 +404,25 @@ export function openEditor(root, project, { onSave, toast }) {
     toast?.(`Комната ${fmtArea(roomArea(room))} м²`);
   }
   function deleteSelected() {
+    if (selectedOpening) {
+      change(() => { plan.openings = plan.openings.filter((o) => o.id !== selectedOpening); selectedOpening = null; });
+      return;
+    }
     if (!selectedId) return;
-    change(() => { plan.rooms = plan.rooms.filter((r) => r.id !== selectedId); selectedId = null; });
+    change(() => {
+      plan.rooms = plan.rooms.filter((r) => r.id !== selectedId);
+      plan.openings = plan.openings.filter((o) => o.roomId !== selectedId);
+      selectedId = null;
+    });
+  }
+  // Привязка к стене под точкой (мировые координаты) для нового или перетаскиваемого проёма.
+  function edgeAt(w) {
+    const hit = nearestEdge(plan, w, 24 / view.s);
+    return hit && { roomId: hit.roomId, edge: hit.edge, t: snapT(hit.t, hit.len) };
+  }
+  function addOpening(type, at) {
+    const o = { id: uid(), type, ...at, width: OPENING_TYPES[type].width, swing: 'in', hinge: 'a' };
+    change(() => { plan.openings.push(o); selectedOpening = o.id; selectedId = null; });
   }
   function finishDraft() {
     if (draft && draft.length >= 3) addRoom(draft);
@@ -372,7 +432,8 @@ export function openEditor(root, project, { onSave, toast }) {
   function setTool(t) {
     if (t !== 'poly') draft = null;
     tool = t;
-    if (t !== 'select') selectedId = null;
+    ghost = null;
+    if (t !== 'select') { selectedId = null; selectedOpening = null; }
     renderAll();
   }
 
@@ -407,8 +468,18 @@ export function openEditor(root, project, { onSave, toast }) {
         gesture = { ...base, type: 'vertex', i: Number(v.dataset.vertex) };
         return;
       }
+      const opEl = e.target.closest('[data-opening]');
+      if (opEl) {
+        selectedOpening = opEl.dataset.opening;
+        selectedId = null;
+        begin();
+        gesture = { ...base, type: 'opening' };
+        renderAll();
+        return;
+      }
       const roomEl = e.target.closest('[data-room]');
       if (roomEl) {
+        selectedOpening = null;
         selectedId = roomEl.dataset.room;
         const room = plan.rooms.find((r) => r.id === selectedId);
         begin();
@@ -416,12 +487,12 @@ export function openEditor(root, project, { onSave, toast }) {
         renderAll();
         return;
       }
-      if (selectedId) { selectedId = null; renderAll(); }
+      if (selectedId || selectedOpening) { selectedId = null; selectedOpening = null; renderAll(); }
       gesture = { ...base, type: 'pan', vx: view.x, vy: view.y };
     } else if (tool === 'rect') {
       const p = snapPt(w);
       gesture = { ...base, type: 'rect', start: p, end: p };
-    } else if (tool === 'poly') {
+    } else if (tool === 'poly' || tool === 'door' || tool === 'window') {
       gesture = { ...base, type: 'tap', vx: view.x, vy: view.y };
     }
   });
@@ -429,7 +500,12 @@ export function openEditor(root, project, { onSave, toast }) {
   svg.addEventListener('pointermove', (e) => {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const w = toWorld(e.clientX, e.clientY);
-    if (e.pointerType === 'mouse' || gesture) hover = tool === 'select' ? null : snapPt(w);
+    const placing = tool === 'door' || tool === 'window';
+    if (e.pointerType === 'mouse' || gesture) hover = tool === 'select' || placing ? null : snapPt(w);
+    if (placing && e.pointerType === 'mouse' && !gesture) {
+      const at = edgeAt(w);
+      ghost = at && { type: tool, ...at, width: OPENING_TYPES[tool].width, swing: 'in', hinge: 'a' };
+    }
 
     if (!gesture) { if (tool !== 'select' && e.pointerType === 'mouse') render(); return; }
 
@@ -471,6 +547,13 @@ export function openEditor(root, project, { onSave, toast }) {
       case 'rect':
         gesture.end = snapPt(w);
         break;
+      case 'opening': {
+        if (!gesture.moved) return;
+        const op = plan.openings.find((o) => o.id === selectedOpening);
+        const at = edgeAt(w);
+        if (op && at) Object.assign(op, at);
+        break;
+      }
     }
     render();
   });
@@ -491,8 +574,14 @@ export function openEditor(root, project, { onSave, toast }) {
       return;
     }
 
-    if (g.type === 'move' || g.type === 'vertex') {
+    if (g.type === 'move' || g.type === 'vertex' || g.type === 'opening') {
       commit();
+    } else if (g.type === 'tap' && !g.moved && (tool === 'door' || tool === 'window')) {
+      const at = edgeAt(toWorld(e.clientX, e.clientY));
+      if (at) addOpening(tool, at);
+      else toast?.('Нажмите ближе к стене комнаты');
+      ghost = null;
+      render();
     } else if (g.type === 'rect') {
       const [x1, y1] = g.start, [x2, y2] = g.end;
       const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
@@ -516,7 +605,7 @@ export function openEditor(root, project, { onSave, toast }) {
   svg.addEventListener('pointerup', endPointer);
   svg.addEventListener('pointercancel', endPointer);
   svg.addEventListener('pointerleave', (e) => {
-    if (e.pointerType === 'mouse' && !gesture) { hover = null; render(); }
+    if (e.pointerType === 'mouse' && !gesture) { hover = null; ghost = null; render(); }
   });
 
   svg.addEventListener('wheel', (e) => {
@@ -539,15 +628,17 @@ export function openEditor(root, project, { onSave, toast }) {
     } else if (typing) {
       if (e.key === 'Enter') document.activeElement.blur();
     } else if (e.key === 'Escape') {
-      if (draft) { draft = null; render(); } else { selectedId = null; renderAll(); }
+      if (draft) { draft = null; render(); } else { selectedId = null; selectedOpening = null; renderAll(); }
     } else if (e.key === 'Enter' && draft) {
       finishDraft();
-    } else if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedId || selectedOpening)) {
       e.preventDefault();
       deleteSelected();
     } else if (e.key === 'v') setTool('select');
     else if (e.key === 'r') setTool('rect');
     else if (e.key === 'p') setTool('poly');
+    else if (e.key === 'd') setTool('door');
+    else if (e.key === 'w') setTool('window');
   }
   document.addEventListener('keydown', onKey);
 
