@@ -9,6 +9,7 @@ import { openListing } from './listing.js';
 import { renderHelp } from './help.js';
 import { summarize, fmtArea } from './geometry.js';
 import { esc } from './ui.js';
+import { demoProject } from './demo.js';
 
 const app = document.getElementById('app');
 let closeScreen = null;
@@ -48,15 +49,21 @@ async function renderList() {
       <div class="actions">
         <button class="btn primary" id="new">+ Новый объект</button>
         <label class="btn">Загрузить копию<input type="file" id="import" accept=".json,application/json" hidden></label>
+        <button class="btn ghost" id="demo">Открыть пример</button>
       </div>
       ${projects.length ? `<div class="cards">${projects.map((p, i) => card(p, counts[i])).join('')}</div>`
-        : `<div class="empty">Пока нет объектов. Создайте первый, нарисуйте планировку и добавьте фото.</div>`}
+        : `<div class="empty">Пока нет объектов. Создайте первый или откройте пример, чтобы посмотреть, как всё выглядит.</div>`}
     </main>`;
 
   app.querySelector('#new').onclick = async () => {
     const p = newProject();
     await saveProject(p);
     requestPersistence();
+    location.hash = `#/p/${p.id}`;
+  };
+  app.querySelector('#demo').onclick = async () => {
+    const p = demoProject();
+    await saveProject(p);
     location.hash = `#/p/${p.id}`;
   };
   app.querySelector('#import').onchange = async (e) => {

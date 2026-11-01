@@ -13,6 +13,7 @@ const STEP = 10;              // шаг привязки, см
 const MIN_ROOM = 30;          // меньше — считаем случайным касанием, см
 const TAP_PX = 8;             // сдвиг пальца, который ещё считается тапом
 const CLOSE_PX = 22;          // радиус «попадания» в первую точку контура
+const STICK_PX = 10;          // на каком расстоянии точка «прилипает» к стене соседней комнаты
 const MIN_S = 0.03, MAX_S = 6; // масштаб, пикселей на сантиметр
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -80,6 +81,7 @@ export function openEditor(root, project, { onSave, toast }) {
       ${topbar(project, 'plan', '<button class="btn sheet-toggle" id="sheet" aria-label="Комнаты и площади">☰</button>')}
       <div class="canvas-wrap">
         <svg id="svg" aria-label="Планировка"><g id="world"></g></svg>
+        <button class="sel-chip" id="sel-chip" hidden></button>
         <div class="hint" id="hint"></div>
         <div class="tools" role="toolbar">
           <button class="btn" data-tool="select" title="Выбрать и двигать">Выбор</button>
@@ -157,7 +159,63 @@ export function openEditor(root, project, { onSave, toast }) {
     const r = svg.getBoundingClientRect();
     return [(clientX - r.left) / view.s + view.x, (clientY - r.top) / view.s + view.y];
   }
-  const snapPt = (p) => [snap(p[0], STEP), snap(p[1], STEP)];
+  // Привязка: сначала к стенам других комнат (вплотную через толщину стены или по линии),
+  // иначе к сетке. guides — направляющие, которые показываем, пока точка «прилипла».
+  let guides = [];
+  // near — область, где стоит точка/комната: «вплотную через стену» — для комнат, которые
+  // лежат рядом по другой оси; выравнивание «по линии» — для дальних.
+  function stickTargets(excludeId, own = [], near = null) {
+    const xs = [], ys = [], w = plan.wallCm;
+    const pad = w + STICK_PX / view.s;
+    for (const r of plan.rooms) {
+      if (r.id === excludeId) continue;
+      const b = bounds(r.points);
+      const besideX = !near || (near.minY <= b.maxY + pad && near.maxY >= b.minY - pad);
+      const besideY = !near || (near.minX <= b.maxX + pad && near.maxX >= b.minX - pad);
+      // Рядом стоящую комнату не выравниваем «по линии» — иначе комнаты наедут друг на друга.
+      for (const [x, y] of r.points) {
+        if (besideX) xs.push(x - w, x + w); else xs.push(x);
+        if (besideY) ys.push(y - w, y + w); else ys.push(y);
+      }
+    }
+    for (const [x, y] of own) { xs.push(x); ys.push(y); }
+    return { xs, ys };
+  }
+  function nearest(v, cands, tol) {
+    let best = null;
+    for (const c of cands) { const d = Math.abs(c - v); if (d <= tol && (best == null || d < Math.abs(best - v))) best = c; }
+    return best;
+  }
+  function snapPt(p, excludeId = null, own = []) {
+    const { xs, ys } = stickTargets(excludeId, own, { minX: p[0], maxX: p[0], minY: p[1], maxY: p[1] });
+    const tol = STICK_PX / view.s;
+    const sx = nearest(p[0], xs, tol), sy = nearest(p[1], ys, tol);
+    guides = [];
+    if (sx != null) guides.push({ x: sx });
+    if (sy != null) guides.push({ y: sy });
+    return [sx ?? snap(p[0], STEP), sy ?? snap(p[1], STEP)];
+  }
+  // Сдвиг комнаты целиком: шаг сетки, плюс доводка, чтобы стена встала вплотную к соседней.
+  function snapMove(orig, rawDx, rawDy, excludeId) {
+    let dx = snap(rawDx, STEP), dy = snap(rawDy, STEP);
+    const b = bounds(orig);
+    const { xs, ys } = stickTargets(excludeId, [], { minX: b.minX + rawDx, maxX: b.maxX + rawDx, minY: b.minY + rawDy, maxY: b.maxY + rawDy });
+    const tol = STICK_PX / view.s;
+    const fit = (vals, cands, d) => {
+      let best = null;
+      for (const v of vals) for (const c of cands) {
+        const diff = c - (v + d);
+        if (Math.abs(diff) <= tol && (best == null || Math.abs(diff) < Math.abs(best.diff))) best = { diff, c };
+      }
+      return best;
+    };
+    guides = [];
+    const bx = fit([...new Set(orig.map((p) => p[0]))], xs, rawDx);
+    const by = fit([...new Set(orig.map((p) => p[1]))], ys, rawDy);
+    if (bx) { dx = rawDx + bx.diff; guides.push({ x: bx.c }); }
+    if (by) { dy = rawDy + by.diff; guides.push({ y: by.c }); }
+    return [dx, dy];
+  }
 
   function fit() {
     const r = svg.getBoundingClientRect();
@@ -278,6 +336,12 @@ export function openEditor(root, project, { onSave, toast }) {
       html += `<circle cx="${hover[0]}" cy="${hover[1]}" r="${px(4)}" fill="#1f5f5b"/>`;
     }
 
+    for (const gl of guides) {
+      const attrs = `stroke="#1f5f5b" stroke-width="${px(1)}" stroke-dasharray="${px(5)} ${px(4)}" pointer-events="none"`;
+      html += 'x' in gl
+        ? `<line x1="${gl.x}" y1="${view.y}" x2="${gl.x}" y2="${view.y + r.height / s}" ${attrs}/>`
+        : `<line x1="${view.x}" y1="${gl.y}" x2="${view.x + r.width / s}" y2="${gl.y}" ${attrs}/>`;
+    }
     if (calib?.length) {
       const [a, b] = calib;
       if (b) html += `<line x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}" stroke="#d9822b" stroke-width="${px(3)}"/>`;
@@ -294,6 +358,13 @@ export function openEditor(root, project, { onSave, toast }) {
     $('#finish').hidden = !(draft && draft.length >= 3);
     root.querySelectorAll('[data-tool]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.tool === tool)));
     hint.textContent = hintText();
+    // На телефоне свойства выделенного — в выезжающей панели; чип подсказывает, что она есть.
+    const chip = $('#sel-chip');
+    const selRoom = plan.rooms.find((x) => x.id === selectedId);
+    const selOp = plan.openings.find((o) => o.id === selectedOpening);
+    chip.hidden = !(selRoom || selOp) || editorEl.classList.contains('sheet-open');
+    if (selRoom) chip.textContent = `${roomName(selRoom)} · ${fmtArea(roomArea(selRoom))} м² — изменить`;
+    else if (selOp) chip.textContent = `${OPENING_TYPES[selOp.type]?.label || 'Проём'} ${selOp.width} см — изменить`;
   }
 
   function hintText() {
@@ -548,6 +619,7 @@ export function openEditor(root, project, { onSave, toast }) {
 
   svg.addEventListener('pointerdown', (e) => {
     if (e.button > 0) return;
+    if (editorEl.classList.contains('sheet-open')) editorEl.classList.remove('sheet-open');
     svg.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -604,7 +676,7 @@ export function openEditor(root, project, { onSave, toast }) {
     if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const w = toWorld(e.clientX, e.clientY);
     const placing = tool === 'door' || tool === 'window';
-    if (e.pointerType === 'mouse' || gesture) hover = tool === 'select' || tool === 'calib' || placing ? null : snapPt(w);
+    if (e.pointerType === 'mouse' || gesture) hover = tool === 'select' || tool === 'calib' || placing ? null : snapPt(w, null, draft || []);
     if (placing && e.pointerType === 'mouse' && !gesture) {
       const at = edgeAt(w);
       ghost = at && { type: tool, ...at, width: OPENING_TYPES[tool].width, swing: 'in', hinge: 'a' };
@@ -638,13 +710,13 @@ export function openEditor(root, project, { onSave, toast }) {
       case 'move': {
         if (!gesture.moved) return;
         const room = plan.rooms.find((r) => r.id === selectedId);
-        const dx = snap(w[0] - gesture.start[0], STEP), dy = snap(w[1] - gesture.start[1], STEP);
+        const [dx, dy] = snapMove(gesture.orig, w[0] - gesture.start[0], w[1] - gesture.start[1], selectedId);
         room.points = gesture.orig.map(([x, y]) => [x + dx, y + dy]);
         break;
       }
       case 'vertex': {
         const room = plan.rooms.find((r) => r.id === selectedId);
-        room.points[gesture.i] = snapPt(w);
+        room.points[gesture.i] = snapPt(w, room.id, room.points.filter((_, i) => i !== gesture.i));
         break;
       }
       case 'rect':
@@ -671,6 +743,7 @@ export function openEditor(root, project, { onSave, toast }) {
     }
     const g = gesture;
     gesture = null;
+    guides = [];
     if (e.type === 'pointercancel') {
       if (pending != null) { restore(pending); pending = null; }
       renderAll();
@@ -693,7 +766,8 @@ export function openEditor(root, project, { onSave, toast }) {
       if (w >= MIN_ROOM && h >= MIN_ROOM) addRoom(rectPoints(Math.min(x1, x2), Math.min(y1, y2), w, h));
       else render();
     } else if (g.type === 'tap' && !g.moved) {
-      const p = snapPt(toWorld(e.clientX, e.clientY));
+      const p = snapPt(toWorld(e.clientX, e.clientY), null, draft || []);
+      guides = [];
       if (!draft) draft = [];
       const first = draft[0];
       if (draft.length >= 3 && Math.hypot((first[0] - p[0]) * view.s, (first[1] - p[1]) * view.s) <= CLOSE_PX) {
@@ -753,7 +827,8 @@ export function openEditor(root, project, { onSave, toast }) {
   $('#undo').onclick = undo;
   $('#redo').onclick = redo;
   $('#fit').onclick = () => { userMovedView = false; fit(); };
-  $('#sheet').onclick = () => editorEl.classList.toggle('sheet-open');
+  $('#sheet').onclick = () => { editorEl.classList.toggle('sheet-open'); render(); };
+  $('#sel-chip').onclick = () => { editorEl.classList.add('sheet-open'); render(); };
   bindTopbar(root, project, scheduleSave);
 
   // Пока пользователь сам не двигал вид, держим весь план в кадре (в т.ч. при повороте экрана).

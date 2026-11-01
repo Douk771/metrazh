@@ -1,6 +1,6 @@
 // Офлайн-кэш оболочки приложения.
 // Стратегия «сначала сеть»: онлайн всегда берётся свежая версия, без сети — из кэша.
-const CACHE = 'metrazh-v5';
+const CACHE = 'metrazh-v6';
 const SHELL = [
   './',
   'index.html',
@@ -8,6 +8,7 @@ const SHELL = [
   'css/app.css',
   'js/app.js',
   'js/db.js',
+  'js/demo.js',
   'js/editor.js',
   'js/geometry.js',
   'js/help.js',

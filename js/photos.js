@@ -3,7 +3,7 @@ import {
   uid, listPhotos, putPhoto, putPhotos, deletePhoto, getSetting, setSetting,
   downloadBlob, safeName, requestPersistence,
 } from './db.js';
-import { DEFAULT_MARK, PHOTO_MAX, THUMB_MAX, loadBitmap, renderPhoto, drawWatermark, prepareLogo } from './watermark.js';
+import { DEFAULT_MARK, PHOTO_MAX, THUMB_MAX, loadBitmap, renderPhoto, drawWatermark, prepareLogo, canvasToBlob } from './watermark.js';
 import { makeZip } from './zip.js';
 import { topbar, bindTopbar, esc } from './ui.js';
 
@@ -81,6 +81,7 @@ export function openPhotos(root, project, { onSave, toast }) {
           <span class="photo-btns">
             <button class="btn ghost" data-move="-1" ${i === 0 ? 'disabled' : ''} aria-label="Раньше">←</button>
             <button class="btn ghost" data-move="1" ${i === photos.length - 1 ? 'disabled' : ''} aria-label="Позже">→</button>
+            <button class="btn ghost" data-rot aria-label="Повернуть на 90°" title="Повернуть">⟳</button>
             <button class="btn ghost danger" data-del aria-label="Удалить фото">✕</button>
           </span>
         </figcaption>
@@ -89,6 +90,7 @@ export function openPhotos(root, project, { onSave, toast }) {
       const id = el.dataset.id;
       el.querySelectorAll('[data-move]').forEach((b) => { b.onclick = () => move(id, Number(b.dataset.move)); });
       el.querySelector('[data-del]').onclick = () => remove(id);
+      el.querySelector('[data-rot]').onclick = () => rotate(id);
     });
     drawPreviews();
   }
@@ -150,6 +152,34 @@ export function openPhotos(root, project, { onSave, toast }) {
     [photos[i], photos[j]] = [photos[j], photos[i]];
     await putPhotos([photos[i], photos[j]]);
     renderGrid();
+  }
+
+  // Поворот по часовой: перекодируем и оригинал, и превью.
+  async function rotate(id) {
+    const p = photos.find((x) => x.id === id);
+    if (!p || busy) return;
+    busy = true;
+    try {
+      const bmp = await loadBitmap(p.blob);
+      const c = document.createElement('canvas');
+      c.width = bmp.height; c.height = bmp.width;
+      const ctx = c.getContext('2d');
+      ctx.translate(c.width, 0);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(bmp, 0, 0);
+      bmp.close?.();
+      p.blob = await canvasToBlob(c, 'image/jpeg', 0.92);
+      p.thumb = (await renderPhoto(c, { maxSide: THUMB_MAX, quality: 0.8 })).blob;
+      [p.w, p.h] = [c.width, c.height];
+      await putPhoto(p);
+      thumbs.get(id)?.close?.();
+      thumbs.delete(id);
+      renderGrid();
+    } catch {
+      toast('Не удалось повернуть фото');
+    } finally {
+      busy = false;
+    }
   }
 
   async function remove(id) {
