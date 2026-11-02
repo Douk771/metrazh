@@ -70,7 +70,20 @@ export function drawWatermark(ctx, W, H, mark, logo) {
 }
 
 // Фото (Blob) → новое JPEG-фото не больше maxSide, при необходимости со знаком.
-export async function renderPhoto(source, { maxSide = PHOTO_MAX, quality = 0.9, mark = null, logo = null } = {}) {
+// Значения по умолчанию для «улучшайзера»: как раз чтобы вытянуть тёмные интерьеры.
+export const DEFAULT_ADJUST = { brightness: 0, contrast: 0, saturation: 0, auto: false };
+
+// CSS-фильтр из ползунков. Canvas 2D поддерживает ctx.filter в современных браузерах.
+export function adjustFilter(adj) {
+  if (!adj) return 'none';
+  const b = 100 + (adj.brightness || 0);
+  const c = 100 + (adj.contrast || 0);
+  const s = 100 + (adj.saturation || 0);
+  if (b === 100 && c === 100 && s === 100) return 'none';
+  return `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
+}
+
+export async function renderPhoto(source, { maxSide = PHOTO_MAX, quality = 0.9, mark = null, logo = null, adjust = null } = {}) {
   const bmp = source instanceof Blob ? await loadBitmap(source) : source;
   const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
   const canvas = document.createElement('canvas');
@@ -78,7 +91,10 @@ export async function renderPhoto(source, { maxSide = PHOTO_MAX, quality = 0.9, 
   canvas.height = Math.round(bmp.height * k);
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
+  const f = adjustFilter(adjust);
+  if (f !== 'none') ctx.filter = f;
   ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  ctx.filter = 'none';
   if (source instanceof Blob) bmp.close?.();
   drawWatermark(ctx, canvas.width, canvas.height, mark, logo);
   const blob = await canvasToBlob(canvas, 'image/jpeg', quality);

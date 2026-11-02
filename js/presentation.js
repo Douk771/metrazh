@@ -285,7 +285,7 @@ export function openPresentation(root, project, { onSave, toast }) {
           <label class="check"><input type="checkbox" id="f-mark" checked> Водяной знак на фото</label>
 
           <div class="pdf-actions">
-            <button class="btn primary" id="download" disabled>Скачать PDF</button>
+            <button class="btn primary" id="download" disabled>Скачать презентацию</button>
             ${canSharePdf ? '<button class="btn" id="share" disabled>Поделиться…</button>' : ''}
           </div>
           <p class="muted"><a href="#/help/pdf">Как устроена презентация</a></p>

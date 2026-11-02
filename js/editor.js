@@ -1,8 +1,8 @@
 // Редактор планировки на SVG. Мировые координаты — сантиметры.
 // Комната = внутренний контур; стена рисуется снаружи контура толщиной plan.wallCm.
 import {
-  ROOM_TYPES, snap, centroid, bounds, asAxisRect, rectPoints,
-  edgeLength, fmtArea, fmtLen, summarize, roomArea,
+  ROOM_TYPES, FURNITURE, ROOM_PRESETS, snap, centroid, bounds, asAxisRect, rectPoints,
+  edgeLength, fmtArea, fmtLen, summarize, roomArea, furnitureRect,
 } from './geometry.js';
 import { uid } from './db.js';
 import { renderPhoto, loadBitmap, canvasToBlob } from './watermark.js';
@@ -22,26 +22,58 @@ const pts = (points) => points.map((p) => p.join(',')).join(' ');
 const typeOf = (room) => ROOM_TYPES[room.type] || ROOM_TYPES.room;
 const roomName = (room) => room.name || typeOf(room).short;
 
+// Мебель рисуем примитивами: прямоугольник + подпись. Достаточно, чтобы понять расстановку.
+function furnitureMarkup(plan, px = () => 1, attrs = () => '') {
+  let out = '';
+  for (const room of plan.rooms) {
+    for (const item of room.furniture || []) {
+      const r = furnitureRect(room, item);
+      if (!r) continue;
+      const tone = typeOf(room).tone || '#b4b0a2';
+      const common = `fill="${tone}" fill-opacity=".38" stroke="${tone}" stroke-width="${px(1.4)}" ${attrs(item, room)}`;
+      if (item.type === 'toilet' || item.type === 'washbasin') {
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        out += `<ellipse cx="${cx}" cy="${cy}" rx="${r.w / 2}" ry="${r.h / 2}" ${common}/>`;
+      } else if (item.type === 'round' || item.type === 'table') {
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        const rad = Math.min(r.w, r.h) / 2;
+        out += `<circle cx="${cx}" cy="${cy}" r="${rad}" ${common}/>`;
+      } else {
+        out += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${px(3)}" ${common}/>`;
+      }
+    }
+  }
+  return out;
+}
+
+function plotMarkup(plan, px = () => 1) {
+  if (!plan.plot || plan.plot.length < 3) return '';
+  return `<polygon points="${pts(plan.plot)}" fill="#dcebda" fill-opacity=".55"
+    stroke="#6f9c6a" stroke-width="${px(2.5)}" stroke-dasharray="${px(10)} ${px(6)}" stroke-linejoin="round"/>`;
+}
+
 function wallsAndFills(plan, attrs = () => '', openingOpts) {
   const walls = plan.rooms.map((r) =>
     `<polygon points="${pts(r.points)}" fill="none" stroke="#2b2f2d" stroke-width="${plan.wallCm * 2}" stroke-linejoin="miter"/>`).join('');
   const fills = plan.rooms.map((r) =>
     `<polygon points="${pts(r.points)}" fill="${typeOf(r).fill}" ${attrs(r)}/>`).join('');
-  return walls + fills + openingsMarkup(plan, openingOpts);
+  return walls + fills + furnitureMarkup(plan) + openingsMarkup(plan, openingOpts);
 }
+
+const allPoints = (plan) => plan.rooms.flatMap((r) => r.points).concat(plan.plot || []);
 
 export function planThumbnail(plan) {
   if (!plan.rooms.length) return '<svg class="thumb" viewBox="0 0 4 3" aria-hidden="true"></svg>';
-  const b = bounds(plan.rooms.flatMap((r) => r.points));
+  const b = bounds(allPoints(plan));
   const pad = plan.wallCm + 60;
   const vb = [b.minX - pad, b.minY - pad, b.maxX - b.minX + pad * 2, b.maxY - b.minY + pad * 2].join(' ');
-  return `<svg class="thumb" viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${wallsAndFills(plan)}</svg>`;
+  return `<svg class="thumb" viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-hidden="true">${plotMarkup(plan)}${wallsAndFills(plan)}</svg>`;
 }
 
 // Самостоятельный SVG плана с подписями — для PDF. Возвращает { svg, width, height } в см.
 export function planSvg(plan) {
   if (!plan.rooms.length) return null;
-  const b = bounds(plan.rooms.flatMap((r) => r.points));
+  const b = bounds(allPoints(plan));
   const pad = plan.wallCm + 20;
   const w = b.maxX - b.minX + pad * 2, h = b.maxY - b.minY + pad * 2;
   const fs = Math.max(w, h) / 38;
@@ -52,7 +84,7 @@ export function planSvg(plan) {
       <tspan x="${cx}" dy="${fs * 1.2}" font-weight="700">${fmtArea(roomArea(room))} м²</tspan></text>`;
   }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.minX - pad} ${b.minY - pad} ${w} ${h}"
-    width="${w}" height="${h}">${wallsAndFills(plan)}${labels}</svg>`;
+    width="${w}" height="${h}">${plotMarkup(plan)}${wallsAndFills(plan)}${labels}</svg>`;
   return { svg, width: w, height: h };
 }
 
@@ -87,7 +119,7 @@ export function openEditor(root, project, { onSave, toast }) {
         <div class="tools" role="toolbar">
           <button class="btn" data-tool="select" title="Выбрать и двигать">Выбор</button>
           <button class="btn" data-tool="rect" title="Прямоугольная комната">Комната</button>
-          <button class="btn" data-tool="poly" title="Комната произвольной формы">Контур</button>
+          <button class="btn" data-tool="plot" title="Границы участка — рисуются на заднем плане">Участок</button>
           <button class="btn" data-tool="door" title="Поставить дверь на стену">Дверь</button>
           <button class="btn" data-tool="window" title="Поставить окно на стену">Окно</button>
           <button class="btn primary" id="finish" hidden>Готово</button>
@@ -109,12 +141,13 @@ export function openEditor(root, project, { onSave, toast }) {
   const hint = $('#hint');
 
   // ---------- сохранение и история ----------
-  const snapshot = () => JSON.stringify({ rooms: plan.rooms, openings: plan.openings, wallCm: plan.wallCm });
+  const snapshot = () => JSON.stringify({ rooms: plan.rooms, openings: plan.openings, wallCm: plan.wallCm, plot: plan.plot || null });
   function restore(json) {
     const s = JSON.parse(json);
     plan.rooms = s.rooms;
     plan.openings = s.openings || [];
     plan.wallCm = s.wallCm;
+    if (s.plot) plan.plot = s.plot; else delete plan.plot;
     if (!plan.rooms.some((r) => r.id === selectedId)) selectedId = null;
     if (!plan.openings.some((o) => o.id === selectedOpening)) selectedOpening = null;
   }
@@ -266,9 +299,17 @@ export function openEditor(root, project, { onSave, toast }) {
         opacity="${u.opacity ?? 0.6}" preserveAspectRatio="none" pointer-events="none"/>`;
       html += '<g opacity=".72">';
     }
+    // Участок всегда на заднем слое: лёгкая заливка + пунктирная граница.
+    if (plan.plot && plan.plot.length >= 3) {
+      html += `<polygon points="${pts(plan.plot)}" fill="#dcebda" fill-opacity=".55"
+        stroke="#6f9c6a" stroke-width="${px(2.5)}" stroke-dasharray="${px(10)} ${px(6)}"
+        stroke-linejoin="round" pointer-events="none"/>`;
+    }
     html += wallsAndFills(plan, (room) => `data-room="${room.id}" style="cursor:${tool === 'select' ? 'move' : 'crosshair'}"`,
       (o) => ({ selected: o.id === selectedOpening, attrs: tool === 'select' ? `data-opening="${o.id}" style="cursor:ew-resize"` : '' }));
     if (underlayOn()) html += '</g>';
+    html += furnitureMarkup(plan, px,
+      (item, room) => (tool === 'select' ? `data-furn="${item.id}" data-froom="${room.id}" style="cursor:grab"` : 'pointer-events:none'));
     if (ghost) html += openingMarkup(plan, ghost, { ghost: true });
 
     // подписи комнат
@@ -370,6 +411,10 @@ export function openEditor(root, project, { onSave, toast }) {
 
   function hintText() {
     if (tool === 'rect') return 'Проведите пальцем по диагонали комнаты';
+    if (tool === 'plot') {
+      if (!draft) return 'Нажимайте по углам участка. Заливка уйдёт под чертёж дома';
+      return draft.length >= 3 ? 'Нажмите на первую точку, чтобы замкнуть участок' : 'Следующий угол участка…';
+    }
     if (tool === 'poly') {
       if (!draft) return 'Нажимайте по очереди на углы комнаты';
       return draft.length >= 3 ? 'Нажмите на первую точку или «Готово», чтобы замкнуть' : 'Следующий угол…';
@@ -421,6 +466,26 @@ export function openEditor(root, project, { onSave, toast }) {
         <div class="row"><button class="btn danger" id="r-del">Удалить комнату</button></div>
       ` : ''}
 
+      <h2>Добавить комнату</h2>
+      <p class="muted">Готовая комната встанет на план целиком — с мебелью. Потом её можно двигать и тянуть за стены.</p>
+      <div class="presets">
+        ${Object.entries(ROOM_PRESETS).map(([k, p]) => `
+          <button class="preset" data-preset="${k}">
+            <span class="swatch" style="background:${ROOM_TYPES[p.type].fill};border-color:${ROOM_TYPES[p.type].tone}"></span>
+            <span class="nm">${p.label}</span>
+            <span class="sz">${(p.w / 100).toFixed(1)}×${(p.h / 100).toFixed(1)} м</span>
+          </button>`).join('')}
+      </div>
+
+      ${sel ? `<h2>Мебель в комнате</h2>
+        <div class="presets">
+          ${Object.entries(FURNITURE).map(([k, f]) => `
+            <button class="preset sm" data-furn-add="${k}" data-furn-room="${sel.id}">
+              <span class="nm">${f.label}</span>
+              <span class="sz">${f.w}×${f.h}</span>
+            </button>`).join('')}
+        </div>` : ''}
+
       <h2>Площади</h2>
       <dl class="summary">
         <dt>Общая</dt><dd>${fmtArea(sum.total)} м²</dd>
@@ -438,7 +503,16 @@ export function openEditor(root, project, { onSave, toast }) {
         </button></li>`).join('')}</ul>`
         : '<p class="muted">Комнат пока нет. Выберите «Комната» внизу и проведите по экрану.</p>'}
 
-      <h2>Подложка: план БТИ</h2>
+      <h2>Участок</h2>
+      ${plan.plot && plan.plot.length >= 3 ? `
+        <p class="muted">Границы участка заданы. Заливка идёт под чертежом дома.</p>
+        <div class="row"><button class="btn danger" id="plot-del">Убрать участок</button></div>
+      ` : '<p class="muted">Инструмент «Участок» внизу: нажмите по углам участка, чтобы обвести границы. Границы рисуются пунктиром и уходят за чертёж.</p>'}
+      <label class="field">Кадастровый номер
+        <input id="p-cad" value="${esc(project.cadastral || '')}" placeholder="00:00:0000000:00" inputmode="numeric">
+      </label>
+
+      <h2>Подложка: план БТИ или ЕГРН</h2>
       ${underlayUrl ? `
         <label class="check"><input type="checkbox" id="u-on" ${project.underlay.visible !== false ? 'checked' : ''}> Показывать</label>
         <label class="field">Яркость подложки<input type="range" id="u-op" min="15" max="100" value="${Math.round((project.underlay.opacity ?? 0.6) * 100)}"></label>
@@ -454,12 +528,16 @@ export function openEditor(root, project, { onSave, toast }) {
       `}
 
       <h2>Объект</h2>
-      <label class="field">Адрес<input id="p-addr" value="${esc(project.address)}" placeholder="Город, улица, дом"></label>
-      <label class="field">Толщина стен на чертеже, см<input id="p-wall" type="number" inputmode="numeric" min="4" max="60" step="1" value="${plan.wallCm}"></label>
       <p class="muted">Площадь считается по внутреннему контуру комнаты, как в техпаспорте. Стены рисуются снаружи и в площадь не входят.</p>`;
 
     panel.querySelectorAll('[data-pick]').forEach((b) => {
       b.onclick = () => { selectedId = b.dataset.pick; selectedOpening = null; tool = 'select'; renderAll(); };
+    });
+    panel.querySelectorAll('[data-preset]').forEach((b) => {
+      b.onclick = () => addPreset(b.dataset.preset);
+    });
+    panel.querySelectorAll('[data-furn-add]').forEach((b) => {
+      b.onclick = () => addFurniture(b.dataset.furnRoom, b.dataset.furnAdd);
     });
     if (op) {
       $('#o-type').onchange = (e) => change(() => {
@@ -500,6 +578,9 @@ export function openEditor(root, project, { onSave, toast }) {
       };
       $('#r-del').onclick = () => deleteSelected();
     }
+    $('#p-cad').onchange = (e) => { project.cadastral = e.target.value.trim(); scheduleSave(); };
+    const plotDel = $('#plot-del');
+    if (plotDel) plotDel.onclick = () => { change(() => { delete plan.plot; }); renderAll(); };
     if (underlayUrl) {
       $('#u-on').onchange = (e) => { project.underlay.visible = e.target.checked; scheduleSave(); render(); };
       $('#u-op').oninput = (e) => { project.underlay.opacity = Number(e.target.value) / 100; scheduleSave(); render(); };
@@ -521,12 +602,6 @@ export function openEditor(root, project, { onSave, toast }) {
         try { await setUnderlay(file); } catch { toast?.('Не удалось открыть изображение'); }
       };
     }
-    $('#p-addr').onchange = (e) => { project.address = e.target.value.trim(); scheduleSave(); };
-    $('#p-wall').onchange = (e) => {
-      const v = Math.round(Number(e.target.value));
-      if (v >= 4 && v <= 60) change(() => { plan.wallCm = v; });
-      else renderPanel();
-    };
   }
 
   function renderAll() { render(); renderPanel(); }
@@ -537,6 +612,37 @@ export function openEditor(root, project, { onSave, toast }) {
     change(() => { plan.rooms.push(room); selectedId = room.id; });
     toast?.(`Комната ${fmtArea(roomArea(room))} м²`);
   }
+  // Ставим готовую комнату справа от уже нарисованных, вплотную через стену.
+  function addPreset(key) {
+    const preset = ROOM_PRESETS[key];
+    if (!preset) return;
+    const b = plan.rooms.length ? bounds(plan.rooms.flatMap((r) => r.points)) : { maxX: 0, minY: 0 };
+    const x = plan.rooms.length ? b.maxX + plan.wallCm : 0;
+    const y = plan.rooms.length ? b.minY : 0;
+    const room = {
+      id: uid(),
+      type: preset.type,
+      name: '',
+      points: rectPoints(x, y, preset.w, preset.h),
+      furniture: (preset.furniture || []).map((f) => ({ id: uid(), ...f })),
+    };
+    change(() => { plan.rooms.push(room); selectedId = room.id; });
+    fit();
+    toast?.(`${preset.label} — ${fmtArea(roomArea(room))} м²`);
+  }
+
+  function addFurniture(roomId, type) {
+    const room = plan.rooms.find((r) => r.id === roomId);
+    const f = FURNITURE[type];
+    if (!room || !f) return;
+    const item = { id: uid(), type, anchor: 'center' };
+    change(() => {
+      room.furniture ??= [];
+      room.furniture.push(item);
+      selectedId = room.id;
+    });
+  }
+
   function deleteSelected() {
     if (selectedOpening) {
       change(() => { plan.openings = plan.openings.filter((o) => o.id !== selectedOpening); selectedOpening = null; });
@@ -689,7 +795,14 @@ export function openEditor(root, project, { onSave, toast }) {
     }, 50);
   }
   function finishDraft() {
-    if (draft && draft.length >= 3) addRoom(draft);
+    if (draft && draft.length >= 3) {
+      if (tool === 'plot') {
+        change(() => { plan.plot = draft.map((p) => [...p]); });
+        toast?.('Границы участка заданы');
+      } else {
+        addRoom(draft);
+      }
+    }
     draft = null;
     render();
   }
@@ -743,6 +856,24 @@ export function openEditor(root, project, { onSave, toast }) {
         renderAll();
         return;
       }
+      const furnEl = e.target.closest('[data-furn]');
+      if (furnEl) {
+        const room = plan.rooms.find((r) => r.id === furnEl.dataset.froom);
+        const item = room?.furniture?.find((f) => f.id === furnEl.dataset.furn);
+        if (item) {
+          selectedId = room.id;
+          selectedOpening = null;
+          // Если мебель привязана к стене, фиксируем её текущее положение центром.
+          const r = furnitureRect(room, item);
+          begin();
+          gesture = {
+            ...base, type: 'furniture', roomId: room.id, itemId: item.id,
+            dx: (r.x + r.w / 2) - w[0], dy: (r.y + r.h / 2) - w[1],
+          };
+          renderAll();
+          return;
+        }
+      }
       const roomEl = e.target.closest('[data-room]');
       if (roomEl) {
         selectedOpening = null;
@@ -758,7 +889,7 @@ export function openEditor(root, project, { onSave, toast }) {
     } else if (tool === 'rect') {
       const p = snapPt(w);
       gesture = { ...base, type: 'rect', start: p, end: p };
-    } else if (tool === 'poly' || tool === 'door' || tool === 'window' || tool === 'calib') {
+    } else if (tool === 'poly' || tool === 'plot' || tool === 'door' || tool === 'window' || tool === 'calib') {
       gesture = { ...base, type: 'tap', vx: view.x, vy: view.y };
     }
   });
@@ -803,6 +934,16 @@ export function openEditor(root, project, { onSave, toast }) {
         const room = plan.rooms.find((r) => r.id === selectedId);
         const [dx, dy] = snapMove(gesture.orig, w[0] - gesture.start[0], w[1] - gesture.start[1], selectedId);
         room.points = gesture.orig.map(([x, y]) => [x + dx, y + dy]);
+        break;
+      }
+      case 'furniture': {
+        if (!gesture.moved) return;
+        const room = plan.rooms.find((r) => r.id === gesture.roomId);
+        const item = room?.furniture?.find((f) => f.id === gesture.itemId);
+        if (item) {
+          item.x = Math.round(w[0] + gesture.dx);
+          item.y = Math.round(w[1] + gesture.dy);
+        }
         break;
       }
       case 'vertex': {

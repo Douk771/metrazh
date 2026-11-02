@@ -303,3 +303,35 @@ a.btn { text-decoration: none; color: inherit; }
   .photo-btns .btn { min-width: 30px; padding: 0 5px; }
 }
 .btn.wide { width: 100%; margin-bottom: 8px; }
+
+/* ---------- Готовые комнаты и мебель ---------- */
+.presets {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.preset {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.preset:hover, .preset:focus-visible { border-color: var(--accent); background: #fdfbf6; }
+.preset .swatch {
+  width: 14px; height: 14px; flex: 0 0 auto;
+  border: 1.5px solid currentColor;
+  border-radius: 4px;
+}
+.preset .nm { flex: 1 1 auto; font-weight: 500; }
+.preset .sz { flex: 0 0 auto; font-size: 11px; color: var(--ink2); }
+.preset.sm { font-size: 12px; padding: 7px 9px; }

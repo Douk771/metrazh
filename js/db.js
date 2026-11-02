@@ -50,7 +50,7 @@ export function newProject(name = 'Новый объект') {
     address: '',
     createdAt: now,
     updatedAt: now,
-    plan: { wallCm: 12, rooms: [] },
+    plan: { wallCm: 20, rooms: [] },
   };
 }
 

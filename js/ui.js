@@ -14,7 +14,7 @@ export function topbar(project, active, extra = '') {
         <a href="#/p/${id}" ${active === 'plan' ? 'aria-current="page"' : ''}>План</a>
         <a href="#/p/${id}/photos" ${active === 'photos' ? 'aria-current="page"' : ''}>Фото</a>
         <a href="#/p/${id}/listing" ${active === 'listing' ? 'aria-current="page"' : ''}>Текст</a>
-        <a href="#/p/${id}/pdf" ${active === 'pdf' ? 'aria-current="page"' : ''}>PDF</a>
+        <a href="#/p/${id}/pdf" ${active === 'pdf' ? 'aria-current="page"' : ''}>Презентация</a>
       </nav>
       <a class="btn ghost help-btn" href="#/help/${help}" title="Как это работает" aria-label="Как это работает">?</a>
       ${extra}

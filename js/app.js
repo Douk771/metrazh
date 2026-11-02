@@ -40,8 +40,7 @@ async function renderList() {
     <main class="list-screen">
       <div class="brand"><img src="icons/icon.svg" alt=""><h1>Метраж</h1>
         <a class="btn ghost help-btn" href="#/help" title="Как это работает" aria-label="Как это работает">?</a></div>
-      <p class="tagline">Планировки и фото объектов прямо на телефоне. Всё хранится только на этом устройстве.
-        <a href="#/help">Как это работает</a></p>
+      <p class="tagline">Планировки, фото и презентации объектов — прямо на телефоне.</p>
       ${showInstall ? `<div class="notice"><b>Добавьте на экран «Домой»</b>
         Нажмите «Поделиться» → «На экран Домой». Так приложение работает без интернета, а Safari не удалит ваши объекты.</div>` : ''}
       ${!persisted && !showInstall ? `<div class="notice"><b>Данные хранятся в браузере</b>
@@ -112,7 +111,7 @@ function card(p, photoCount) {
       </button>
       <div class="card-foot">
         <a class="btn ghost" href="#/p/${p.id}/photos">Фото</a>
-        <a class="btn ghost" href="#/p/${p.id}/pdf">PDF</a>
+        <a class="btn ghost" href="#/p/${p.id}/pdf">Презентация</a>
         <button class="btn ghost" data-export="${p.id}">Копия</button>
         <button class="btn ghost danger" data-delete="${p.id}">Удалить</button>
       </div>

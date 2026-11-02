@@ -3,7 +3,7 @@ import {
   uid, listPhotos, putPhoto, putPhotos, deletePhoto, getSetting, setSetting,
   downloadBlob, safeName, requestPersistence,
 } from './db.js';
-import { DEFAULT_MARK, PHOTO_MAX, THUMB_MAX, loadBitmap, renderPhoto, drawWatermark, prepareLogo, canvasToBlob } from './watermark.js';
+import { DEFAULT_MARK, DEFAULT_ADJUST, PHOTO_MAX, THUMB_MAX, loadBitmap, renderPhoto, drawWatermark, prepareLogo, canvasToBlob, adjustFilter } from './watermark.js';
 import { makeZip } from './zip.js';
 import { topbar, bindTopbar, esc } from './ui.js';
 
@@ -22,6 +22,7 @@ const canShareFiles = (() => {
 export function openPhotos(root, project, { onSave, toast }) {
   let photos = [];
   let mark = { ...DEFAULT_MARK };
+  let adjust = { ...DEFAULT_ADJUST };
   let logo = null;            // ImageBitmap логотипа
   let logoUrl = null;
   let busy = false;
@@ -43,7 +44,6 @@ export function openPhotos(root, project, { onSave, toast }) {
           <div class="photo-actions" id="exports" hidden>
             <button class="btn" id="dl-mark">Скачать с водяным знаком</button>
             <button class="btn" id="dl-clean">Скачать без знака</button>
-            ${canShareFiles ? '<button class="btn" id="share">Поделиться…</button>' : ''}
           </div>
           <div class="progress" id="progress" hidden></div>
           <div class="photo-grid" id="grid"></div>
@@ -108,7 +108,10 @@ export function openPhotos(root, project, { onSave, toast }) {
       if (closed) return;
       const c = el.querySelector('canvas');
       const ctx = c.getContext('2d');
+      const f = adjustFilter(adjust);
+      if (f !== 'none') ctx.filter = f;
       ctx.drawImage(bmp, 0, 0, c.width, c.height);
+      ctx.filter = 'none';
       drawWatermark(ctx, c.width, c.height, mark, logo);
     }
     drawMarkPreview();
@@ -197,8 +200,9 @@ export function openPhotos(root, project, { onSave, toast }) {
     const files = [];
     for (let i = 0; i < photos.length; i++) {
       progress(`Готовлю фото ${i + 1} из ${photos.length}…`);
-      const blob = withMark
-        ? (await renderPhoto(photos[i].blob, { maxSide: PHOTO_MAX, quality: 0.9, mark, logo })).blob
+      const needAdjust = adjustFilter(adjust) !== 'none';
+      const blob = (withMark || needAdjust)
+        ? (await renderPhoto(photos[i].blob, { maxSide: PHOTO_MAX, quality: 0.9, mark: withMark ? mark : null, logo, adjust })).blob
         : photos[i].blob;
       files.push({ name: `${String(i + 1).padStart(2, '0')}.jpg`, blob });
     }
@@ -243,6 +247,13 @@ export function openPhotos(root, project, { onSave, toast }) {
   // ---------- настройки знака ----------
   function renderMarkCard() {
     $('#mark').innerHTML = `
+      <h2>Улучшение фото</h2>
+      <p class="muted">Вытянуть тёмный интерьер или приглушить пересвет. Действует на все фото при выгрузке.</p>
+      <label class="check"><input type="checkbox" id="a-auto" ${adjust.auto ? 'checked' : ''}> Автоулучшение</label>
+      <label class="field">Яркость <input type="range" id="a-br" min="-45" max="45" value="${adjust.brightness}"></label>
+      <label class="field">Контраст <input type="range" id="a-co" min="-45" max="45" value="${adjust.contrast}"></label>
+      <label class="field">Красочность <input type="range" id="a-sa" min="-60" max="45" value="${adjust.saturation}"></label>
+
       <h2>Водяной знак</h2>
       <canvas id="m-preview" class="mark-preview" width="960" height="640" aria-label="Пример фото со знаком"></canvas>
       <label class="check"><input type="checkbox" id="m-on" ${mark.enabled ? 'checked' : ''}> Наносить знак при выгрузке</label>
@@ -275,6 +286,23 @@ export function openPhotos(root, project, { onSave, toast }) {
       if (rerenderCard) renderMarkCard();
       drawPreviews();
     };
+    const updateAdj = () => {
+      clearTimeout(markTimer);
+      markTimer = setTimeout(() => setSetting('adjust', adjust), 300);
+      drawPreviews();
+    };
+    $('#a-auto').onchange = (e) => {
+      adjust.auto = e.target.checked;
+      // Автоулучшение — мягкая коррекция: чуть ярче, чуть контрастнее.
+      if (adjust.auto) { adjust.brightness = 8; adjust.contrast = 12; adjust.saturation = 6; }
+      else { adjust.brightness = 0; adjust.contrast = 0; adjust.saturation = 0; }
+      renderMarkCard();
+      updateAdj();
+    };
+    ['a-br', 'a-co', 'a-sa'].forEach((id, i) => {
+      const key = ['brightness', 'contrast', 'saturation'][i];
+      $('#' + id).oninput = (e) => { adjust[key] = Number(e.target.value); adjust.auto = false; updateAdj(); };
+    });
     $('#m-on').onchange = (e) => update(() => { mark.enabled = e.target.checked; });
     $('#m-text').oninput = (e) => update(() => { mark.text = e.target.value; });
     $('#m-size').oninput = (e) => update(() => { mark.size = Number(e.target.value); });
@@ -330,7 +358,10 @@ export function openPhotos(root, project, { onSave, toast }) {
     if (closed) return;
     c.width = src.width; c.height = src.height;
     const ctx = c.getContext('2d');
+    const f = adjustFilter(adjust);
+    if (f !== 'none') ctx.filter = f;
     ctx.drawImage(src, 0, 0, c.width, c.height);
+    ctx.filter = 'none';
     drawWatermark(ctx, c.width, c.height, mark, logo);
   }
 
@@ -338,11 +369,12 @@ export function openPhotos(root, project, { onSave, toast }) {
   $('#add').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
   $('#dl-mark').onclick = () => exportZip(true);
   $('#dl-clean').onclick = () => exportZip(false);
-  if (canShareFiles) $('#share').onclick = share;
 
   (async () => {
     const saved = await getSetting('mark', null);
     if (saved) mark = { ...DEFAULT_MARK, ...saved };
+    const savedAdj = await getSetting('adjust', null);
+    if (savedAdj) adjust = { ...DEFAULT_ADJUST, ...savedAdj };
     if (mark.logo) await setLogo(mark.logo);
     photos = await listPhotos(project.id);
     if (closed) return;
