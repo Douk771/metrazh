@@ -5,13 +5,20 @@ import { DEFAULT_MARK, DEFAULT_ADJUST, loadBitmap, renderPhoto, canvasToBlob } f
 import { summarize, fmtArea, roomArea, ROOM_TYPES } from './geometry.js';
 import { planSvg } from './editor.js';
 import { makePdf } from './pdf.js';
+import { makeZip } from './zip.js';
 import { topbar, bindTopbar, esc } from './ui.js';
 
 const W = 1240, H = 1754, MM = W / 210;      // A4 при 150 dpi
 const M = 16 * MM;                            // поля
 const CW = W - M * 2;                         // ширина полосы набора
 const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
-const C = { ink: '#1d2321', ink2: '#5b625e', accent: '#1f5f5b', line: '#d6cdbb', paper: '#f4efe6' };
+const SERIF = 'Georgia, "Times New Roman", serif';
+// Палитра из брендбука Метража.
+const C = {
+  ink: '#1f2b29', ink2: '#5f6f6b', deep: '#2f4a47', mid: '#49635f', sage: '#b7c6bd',
+  sand: '#ede4d9', paper: '#faf6f3', peach: '#e6c8b8', white: '#ffffff', line: '#ddd5c9',
+};
+const STORY_W = 1080, STORY_H = 1920;         // формат сторис 9:16
 const pt = (n) => n * 0.3528 * MM;
 
 export const DEFAULT_AGENT = { name: '', phone: '', agency: '' };
@@ -21,17 +28,17 @@ const canSharePdf = (() => {
 })();
 
 // ---------- рисование ----------
-function newPage() {
+function newPage(background = C.paper) {
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#ffffff';
+  ctx.fillStyle = background;
   ctx.fillRect(0, 0, W, H);
   ctx.textBaseline = 'alphabetic';
   return { canvas: c, ctx };
 }
 
-function font(ctx, size, weight = 400) { ctx.font = `${weight} ${pt(size)}px ${FONT}`; }
+function font(ctx, size, weight = 400, family = FONT) { ctx.font = `${weight} ${pt(size)}px ${family}`; }
 
 function wrap(ctx, text, maxW) {
   const lines = [];
@@ -47,8 +54,8 @@ function wrap(ctx, text, maxW) {
   return lines;
 }
 
-function drawText(ctx, text, x, y, { size = 12, weight = 400, color = C.ink, maxW = CW, lh = 1.4, align = 'left', maxLines = Infinity } = {}) {
-  font(ctx, size, weight);
+function drawText(ctx, text, x, y, { size = 12, weight = 400, color = C.ink, maxW = CW, lh = 1.4, align = 'left', maxLines = Infinity, family = FONT } = {}) {
+  font(ctx, size, weight, family);
   ctx.fillStyle = color;
   ctx.textAlign = align;
   let lines = wrap(ctx, text, maxW);
@@ -73,11 +80,41 @@ function drawContain(ctx, img, x, y, w, h) {
   ctx.drawImage(img, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
 }
 
-function header(ctx, title) {
-  drawText(ctx, title, M, M + pt(20), { size: 20, weight: 700 });
-  ctx.fillStyle = C.accent;
-  ctx.fillRect(M, M + pt(20) + 4 * MM, 24 * MM, 1.2 * MM);
+function roundedPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
+
+function roundedRect(ctx, x, y, w, h, r, color) {
+  roundedPath(ctx, x, y, w, h, r);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+// Фото в скруглённой рамке: близкое по пропорциям заполняет рамку, остальное вписывается целиком.
+function drawPhoto(ctx, img, x, y, w, h) {
+  ctx.save();
+  roundedPath(ctx, x, y, w, h, 5 * MM);
+  ctx.clip();
+  ctx.fillStyle = C.sand;
+  ctx.fillRect(x, y, w, h);
+  const ratio = (img.width / img.height) / (w / h);
+  if (ratio > 0.8 && ratio < 1.25) drawCover(ctx, img, x, y, w, h);
+  else drawContain(ctx, img, x, y, w, h);
+  ctx.restore();
+}
+
+function header(ctx, title) {
+  drawText(ctx, title, M, M + pt(26), { size: 26, family: SERIF, color: C.deep, maxLines: 1 });
+  ctx.fillStyle = C.peach;
+  ctx.fillRect(M, M + pt(26) + 5 * MM, 18 * MM, 1.4 * MM);
+}
+const HEADER_H = 26 * MM;
 
 function footer(ctx, d, n, total) {
   const y = H - 9 * MM;
@@ -104,25 +141,30 @@ function facts(d) {
   return f;
 }
 
-function agentBlock(ctx, d, y) {
+// Контакты агента. onDark — для тёмного фона обложки.
+function agentBlock(ctx, d, y, { onDark = false } = {}) {
   const a = d.agent;
   if (!a.name && !a.phone && !a.agency && !d.logo) return;
-  ctx.fillStyle = C.paper;
-  ctx.fillRect(M, y, CW, 30 * MM);
-  let x = M + 6 * MM;
+  const h = 30 * MM;
+  if (!onDark) roundedRect(ctx, M, y, CW, h, 5 * MM, C.sand);
+  const inset = onDark ? 0 : 6 * MM;
+  let x = M + inset;
   if (d.logo) {
-    drawContain(ctx, d.logo, x, y + 5 * MM, 34 * MM, 20 * MM);
-    x += 40 * MM;
+    // Логотип всегда на светлой плашке: он может быть тёмным.
+    roundedRect(ctx, x, y + 4 * MM, 38 * MM, 22 * MM, 3 * MM, C.paper);
+    drawContain(ctx, d.logo, x + 3 * MM, y + 6 * MM, 32 * MM, 18 * MM);
+    x += 44 * MM;
   }
+  const maxW = W - M - x - inset;
   let ty = y + 11 * MM;
-  if (a.name) ty = drawText(ctx, a.name, x, ty, { size: 14, weight: 700, maxW: W - M - x - 6 * MM, maxLines: 1 });
-  if (a.phone) ty = drawText(ctx, a.phone, x, ty + 1 * MM, { size: 13, color: C.accent, weight: 600, maxLines: 1 });
-  if (a.agency) drawText(ctx, a.agency, x, ty + 1 * MM, { size: 10, color: C.ink2, maxLines: 1 });
+  if (a.name) ty = drawText(ctx, a.name, x, ty, { size: 14, weight: 700, color: onDark ? C.white : C.ink, maxW, maxLines: 1 });
+  if (a.phone) ty = drawText(ctx, a.phone, x, ty + 1 * MM, { size: 13, weight: 600, color: onDark ? C.peach : C.deep, maxW, maxLines: 1 });
+  if (a.agency) drawText(ctx, a.agency, x, ty + 1 * MM, { size: 10, color: onDark ? C.sage : C.ink2, maxW, maxLines: 1 });
 }
 
 function pageCover(d) {
-  const { canvas, ctx } = newPage();
-  const heroH = 128 * MM;
+  const { canvas, ctx } = newPage(C.deep);
+  const heroH = 142 * MM;
   if (d.photos[0]) {
     drawCover(ctx, d.photos[0], 0, 0, W, heroH);
   } else {
@@ -131,91 +173,129 @@ function pageCover(d) {
     if (d.plan) drawContain(ctx, d.plan, M, 10 * MM, CW, heroH - 20 * MM);
   }
 
-  let y = heroH + 16 * MM;
-  y = drawText(ctx, d.project.name || 'Объект', M, y, { size: 24, weight: 700, maxLines: 2, lh: 1.2 });
-  if (d.project.address) y = drawText(ctx, d.project.address, M, y + 2 * MM, { size: 12, color: C.ink2, maxLines: 2 });
+  let y = heroH + 18 * MM;
+  y = drawText(ctx, d.project.name || 'Объект', M, y, { size: 28, family: SERIF, color: C.white, maxLines: 2, lh: 1.15 });
+  if (d.project.address) y = drawText(ctx, d.project.address, M, y + 1 * MM, { size: 12, color: C.sage, maxLines: 2 });
   const price = fmtPrice(d.project.price);
-  if (price) y = drawText(ctx, price, M, y + 9 * MM, { size: 26, weight: 700, color: C.accent });
+  if (price) y = drawText(ctx, price, M, y + 10 * MM, { size: 30, family: SERIF, color: C.peach, maxLines: 1 });
 
   const f = facts(d);
   if (f.length) {
     y += 8 * MM;
-    const gap = 3 * MM;
-    const bw = (CW - gap * (f.length - 1)) / f.length;
+    const bw = CW / f.length;
     f.forEach(([label, value], i) => {
-      const x = M + i * (bw + gap);
-      ctx.fillStyle = C.paper;
-      ctx.fillRect(x, y, bw, 22 * MM);
-      drawText(ctx, label, x + 4 * MM, y + 8 * MM, { size: 9, color: C.ink2, maxW: bw - 8 * MM, maxLines: 1 });
-      drawText(ctx, value, x + 4 * MM, y + 17 * MM, { size: f.length > 4 ? 13 : 15, weight: 700, maxW: bw - 8 * MM, maxLines: 1 });
+      const x = M + i * bw;
+      if (i) {
+        ctx.fillStyle = 'rgba(255,255,255,.22)';
+        ctx.fillRect(x - 3 * MM, y, 1, 15 * MM);
+      }
+      drawText(ctx, label, x, y + 4 * MM, { size: 9.5, color: C.sage, maxW: bw - 6 * MM, maxLines: 1 });
+      drawText(ctx, value, x, y + 13 * MM, { size: f.length > 4 ? 13 : 15, weight: 700, color: C.white, maxW: bw - 6 * MM, maxLines: 1 });
     });
   }
 
-  agentBlock(ctx, d, H - M - 30 * MM);
+  agentBlock(ctx, d, H - M - 26 * MM, { onDark: true });
   return canvas;
 }
 
 function pagePlan(d) {
   const { canvas, ctx } = newPage();
   header(ctx, 'Планировка');
-  const top = M + 22 * MM;
+  const top = M + HEADER_H;
   const rooms = d.project.plan.rooms;
   const twoCols = rooms.length > 6;
-  const rowH = 7 * MM;
-  const tableRows = (twoCols ? Math.ceil(rooms.length / 2) : rooms.length) + 1;
-  const tableH = tableRows * rowH + 30 * MM;
-  const planH = H - top - tableH - 22 * MM;
-  drawContain(ctx, d.plan, M, top, CW, planH);
+  const rowH = 8 * MM;
+  const rows = twoCols ? Math.ceil(rooms.length / 2) : rooms.length;
+  const planH = H - top - rows * rowH - 72 * MM;
+  roundedRect(ctx, M, top, CW, planH, 5 * MM, C.white);
+  drawContain(ctx, d.plan, M + 6 * MM, top + 6 * MM, CW - 12 * MM, planH - 12 * MM);
 
-  let y = top + planH + 10 * MM;
+  let y = top + planH + 11 * MM;
   const colW = twoCols ? (CW - 10 * MM) / 2 : CW;
   rooms.forEach((r, i) => {
-    const col = twoCols && i >= Math.ceil(rooms.length / 2) ? 1 : 0;
-    const row = col ? i - Math.ceil(rooms.length / 2) : i;
+    const col = twoCols && i >= rows ? 1 : 0;
+    const row = col ? i - rows : i;
     const x = M + col * (colW + 10 * MM), ry = y + row * rowH;
     const t = ROOM_TYPES[r.type] || ROOM_TYPES.room;
-    ctx.fillStyle = t.fill;
-    ctx.fillRect(x, ry - 3.6 * MM, 3.5 * MM, 3.5 * MM);
+    ctx.beginPath();
+    ctx.arc(x + 1.8 * MM, ry - 1.5 * MM, 1.8 * MM, 0, Math.PI * 2);
+    ctx.fillStyle = t.tone || t.fill;
+    ctx.fill();
     drawText(ctx, r.name || t.short, x + 6 * MM, ry, { size: 11, maxW: colW - 30 * MM, maxLines: 1 });
-    drawText(ctx, `${fmtArea(roomArea(r))} м²`, x + colW, ry, { size: 11, align: 'right' });
+    drawText(ctx, `${fmtArea(roomArea(r))} м²`, x + colW, ry, { size: 11, weight: 600, align: 'right' });
     ctx.fillStyle = C.line;
-    ctx.fillRect(x, ry + 2.2 * MM, colW, 1);
+    ctx.fillRect(x, ry + 2.8 * MM, colW, 1);
   });
 
-  y += (twoCols ? Math.ceil(rooms.length / 2) : rooms.length) * rowH + 6 * MM;
+  y += rows * rowH + 3 * MM;
   const s = d.summary;
   const totals = [['Общая площадь', s.total], ['Жилая', s.living], ['Кухня', s.kitchen], ['Балконы и лоджии', s.outdoor]]
     .filter(([, v]) => v);
-  const tw = CW / Math.max(1, totals.length);
+  roundedRect(ctx, M, y, CW, 22 * MM, 5 * MM, C.deep);
+  const tw = (CW - 12 * MM) / Math.max(1, totals.length);
   totals.forEach(([label, v], i) => {
-    drawText(ctx, label, M + i * tw, y, { size: 9, color: C.ink2 });
-    drawText(ctx, `${fmtArea(v)} м²`, M + i * tw, y + 6.5 * MM, { size: 14, weight: 700 });
+    const x = M + 6 * MM + i * tw;
+    drawText(ctx, label, x, y + 8.5 * MM, { size: 9, color: C.sage, maxW: tw - 3 * MM, maxLines: 1 });
+    drawText(ctx, `${fmtArea(v)} м²`, x, y + 16.5 * MM, { size: 14, weight: 700, color: C.white, maxW: tw - 3 * MM, maxLines: 1 });
   });
-  drawText(ctx, 'Площади указаны по внутреннему контуру помещений.', M, y + 16 * MM, { size: 8.5, color: C.ink2 });
+  drawText(ctx, 'Площади указаны по внутреннему контуру помещений.', M, y + 28 * MM, { size: 8.5, color: C.ink2 });
   return canvas;
 }
 
 function pagePhotos(d, pair) {
   const { canvas, ctx } = newPage();
   header(ctx, 'Фотографии');
-  const top = M + 22 * MM, gap = 8 * MM;
-  const boxH = (H - top - 24 * MM - gap) / 2;
-  pair.forEach((img, i) => {
-    const y = top + i * (boxH + gap);
-    ctx.fillStyle = C.paper;
-    ctx.fillRect(M, y, CW, boxH);
-    drawContain(ctx, img, M, y, CW, boxH);
-  });
+  const top = M + HEADER_H, gap = 7 * MM;
+  const area = H - top - 22 * MM;
+  if (pair.length === 1) {
+    // Одно фото на странице — по его пропорциям, чтобы не было пустой рамки.
+    const h = Math.min(area, CW * pair[0].height / pair[0].width);
+    drawPhoto(ctx, pair[0], M, top + (area - h) / 2, CW, h);
+    return canvas;
+  }
+  const boxH = (area - gap) / 2;
+  pair.forEach((img, i) => drawPhoto(ctx, img, M, top + i * (boxH + gap), CW, boxH));
   return canvas;
 }
 
 function pageAbout(d) {
   const { canvas, ctx } = newPage();
   header(ctx, 'Об объекте');
-  let y = M + 32 * MM;
-  y = drawText(ctx, d.project.description, M, y, { size: 12, lh: 1.55, maxLines: 40 });
-  agentBlock(ctx, d, Math.max(y + 12 * MM, H - M - 40 * MM));
+  let y = M + HEADER_H + 8 * MM;
+  // Текст не длиннее места над контактами и подвалом; лишнее обрезается многоточием.
+  const agentY = H - M - 40 * MM;
+  const maxLines = Math.floor((agentY - 8 * MM - y) / (pt(13) * 1.6));
+  drawText(ctx, d.project.description, M, y, { size: 13, lh: 1.6, maxLines });
+  agentBlock(ctx, d, agentY);
   return canvas;
+}
+
+// Лист в формате сторис: 9:16 на фоне из брендовой растяжки.
+export function storyPage(page) {
+  const c = document.createElement('canvas');
+  c.width = STORY_W; c.height = STORY_H;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, 0, STORY_H);
+  g.addColorStop(0, C.mid);
+  g.addColorStop(0.55, C.sage);
+  g.addColorStop(1, C.sand);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, STORY_W, STORY_H);
+  const pw = 960, ph = pw * H / W;
+  const x = (STORY_W - pw) / 2, y = (STORY_H - ph) / 2, r = 24;
+  ctx.save();
+  ctx.shadowColor = 'rgba(31,43,41,.35)';
+  ctx.shadowBlur = 50;
+  ctx.shadowOffsetY = 16;
+  roundedRect(ctx, x, y, pw, ph, r, C.paper);
+  ctx.restore();
+  ctx.save();
+  roundedPath(ctx, x, y, pw, ph, r);
+  ctx.clip();
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(page, x, y, pw, ph);
+  ctx.restore();
+  return c;
 }
 
 export function buildPages(d) {
@@ -287,6 +367,8 @@ export function openPresentation(root, project, { onSave, toast }) {
 
           <div class="pdf-actions">
             <button class="btn primary" id="download" disabled>Скачать презентацию</button>
+            <button class="btn" id="images" disabled>Листы картинками</button>
+            <button class="btn" id="stories" disabled>Для сторис</button>
             ${canSharePdf ? '<button class="btn" id="share" disabled>Поделиться…</button>' : ''}
           </div>
           <p class="muted"><a href="#/help/pdf">Как устроена презентация</a></p>
@@ -341,6 +423,8 @@ export function openPresentation(root, project, { onSave, toast }) {
     });
     progress('');
     $('#download').disabled = false;
+    $('#images').disabled = false;
+    $('#stories').disabled = false;
     if (canSharePdf) $('#share').disabled = false;
   }
 
@@ -364,13 +448,26 @@ export function openPresentation(root, project, { onSave, toast }) {
     if (busy || !pages.length) return;
     busy = true;
     try { await fn(); } catch (e) {
-      if (e?.name !== 'AbortError') toast('Не получилось собрать PDF');
+      if (e?.name !== 'AbortError') toast('Не получилось собрать файл');
     } finally { busy = false; progress(''); }
   }
 
   $('#download').onclick = () => guarded(async () => {
     downloadBlob(await buildPdf(), `${safeName(project.name)}.pdf`);
   });
+  // Каждый лист отдельной картинкой, все одним архивом.
+  async function downloadImages(suffix, convert) {
+    const files = [];
+    for (let i = 0; i < pages.length; i++) {
+      progress(`Готовлю картинку ${i + 1} из ${pages.length}…`);
+      const blob = await canvasToBlob(convert(pages[i]), 'image/jpeg', 0.9);
+      files.push({ name: `${String(i + 1).padStart(2, '0')}.jpg`, blob });
+    }
+    progress('Собираю архив…');
+    downloadBlob(await makeZip(files), `${safeName(project.name)} — ${suffix}.zip`);
+  }
+  $('#images').onclick = () => guarded(() => downloadImages('листы', (page) => page));
+  $('#stories').onclick = () => guarded(() => downloadImages('сторис', storyPage));
   if (canSharePdf) {
     $('#share').onclick = () => guarded(async () => {
       const file = new File([await buildPdf()], `${safeName(project.name)}.pdf`, { type: 'application/pdf' });
