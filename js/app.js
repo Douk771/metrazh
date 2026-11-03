@@ -7,6 +7,7 @@ import { openPhotos } from './photos.js';
 import { openPresentation } from './presentation.js';
 import { openListing } from './listing.js';
 import { renderHelp } from './help.js';
+import { renderCard } from './card.js';
 import { summarize, fmtArea } from './geometry.js';
 import { esc } from './ui.js';
 import { demoProject } from './demo.js';
@@ -39,7 +40,8 @@ async function renderList() {
   app.innerHTML = `
     <main class="list-screen">
       <div class="brand"><h1>Метраж</h1>
-        <a class="btn ghost help-btn" href="#/help" title="Как это работает" aria-label="Как это работает">?</a></div>
+        <a class="btn ghost help-btn" href="#/help" title="Как это работает" aria-label="Как это работает">?</a>
+        <a class="btn ghost menu-btn" href="#/card" title="Моя визитка" aria-label="Моя визитка">☰</a></div>
       <p class="tagline">Планировки, фото и презентации объектов — прямо на телефоне.</p>
       ${showInstall ? `<div class="notice"><b>Добавьте на экран «Домой»</b>
         Нажмите «Поделиться» → «На экран Домой». Так приложение работает без интернета, а Safari не удалит ваши объекты.</div>` : ''}
@@ -49,6 +51,7 @@ async function renderList() {
       <div class="actions">
         <label class="btn">Загрузить копию<input type="file" id="import" accept=".json,application/json" hidden></label>
         <button class="btn" id="demo">Открыть пример</button>
+        <a class="btn" href="#/card">Моя визитка</a>
       </div>
       <div class="new-wrap"><button class="btn new-object" id="new">+ Новый объект</button></div>
       ${projects.length ? `<div class="cards">${projects.map((p, i) => card(p, counts[i])).join('')}</div>`
@@ -135,6 +138,8 @@ async function route() {
   let m;
   if ((m = hash.match(/^#\/p\/([^/]+)(?:\/(photos|pdf|listing))?$/))) {
     renderProject(decodeURIComponent(m[1]), m[2]);
+  } else if (hash === '#/card') {
+    renderCard(app, { toast });
   } else if ((m = hash.match(/^#\/help(?:\/(\w+))?$/))) {
     renderHelp(app, m[1]);
     const back = app.querySelector('.help-screen > a');

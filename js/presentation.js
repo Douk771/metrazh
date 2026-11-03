@@ -505,7 +505,13 @@ export function openPresentation(root, project, { onSave, toast }) {
   $('#name').addEventListener('input', (e) => { project.name = e.target.value; schedule(); });
 
   const bindAgent = (id, key) => {
-    $(id).oninput = (e) => { agent[key] = e.target.value.trim(); setSetting('agent', agent); schedule(); };
+    $(id).oninput = (e) => {
+      agent[key] = e.target.value.trim();
+      // Имя поменяли здесь одной строкой — визитка заново разложит его на части.
+      if (key === 'name') { agent.firstName = ''; agent.middleName = ''; agent.lastName = ''; }
+      setSetting('agent', agent);
+      schedule();
+    };
   };
   $('#f-mark').onchange = (e) => { withMark = e.target.checked; schedule(); };
 

@@ -397,3 +397,14 @@ a.btn.help-btn, .topbar a.btn.ghost { color: #fff; }
 .furn-list .pick[aria-current="true"] { background: var(--paper-2); font-weight: 600; }
 .furn-ico { flex: 0 0 auto; width: 26px; height: 26px; }
 .photo-actions .muted { color: #fff; }
+
+/* ---------- Моя визитка ---------- */
+.menu-btn { color: #fff !important; font-size: 22px; padding: 0 8px; }
+.back-link { color: #fff !important; font-size: 20px; padding: 0 6px; }
+.card-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 20px; align-items: start; margin-top: 12px; }
+.card-preview canvas { display: block; width: 100%; height: auto; border-radius: 20px; box-shadow: 0 8px 26px rgba(31,43,41,.25); }
+.card-empty { background: var(--card); border-radius: 14px; padding: 10px 14px; margin: 10px 0 0; }
+@media (max-width: 760px) {
+  .card-grid { grid-template-columns: minmax(0, 1fr); }
+  .card-preview { grid-row: 1; }
+}
