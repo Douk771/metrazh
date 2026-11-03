@@ -440,6 +440,12 @@ export function openEditor(root, project, { onSave, toast }) {
         };
         html += pill(r.x, r.y + r.h / 2, true) + pill(r.x + r.w, r.y + r.h / 2, true)
           + pill(r.x + r.w / 2, r.y, false) + pill(r.x + r.w / 2, r.y + r.h, false);
+        // Значок поворота в центре: нажатие поворачивает, а если потянуть — мебель двигается.
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2, k = px(18) / 24;
+        html += `<circle cx="${cx}" cy="${cy}" r="${px(14)}" fill="#fff" stroke="#d9822b" stroke-width="${px(2)}"
+          data-frot="1" style="cursor:pointer"><title>Повернуть на 90°</title></circle>
+          <path transform="translate(${cx - 12 * k} ${cy - 12 * k}) scale(${k})" d="M18 8a7.5 7.5 0 1 0 1.5 5M18.5 3v5h-5"
+            fill="none" stroke="#a35a12" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" pointer-events="none"/>`;
       }
     }
 
@@ -1054,6 +1060,18 @@ export function openEditor(root, project, { onSave, toast }) {
         gesture = { ...base, type: 'vertex', i: Number(v.dataset.vertex) };
         return;
       }
+      if (e.target.closest('[data-frot]')) {
+        const found = findFurn(selectedFurn);
+        if (found) {
+          const r = furnitureRect(found.room, found.item);
+          begin();
+          gesture = {
+            ...base, type: 'furniture', rotateOnTap: true, roomId: found.room.id, itemId: found.item.id,
+            dx: (r.x + r.w / 2) - w[0], dy: (r.y + r.h / 2) - w[1],
+          };
+          return;
+        }
+      }
       const furnEdge = e.target.closest('[data-fedge]');
       const sel = furnEdge && findFurn(selectedFurn);
       if (sel) {
@@ -1219,6 +1237,10 @@ export function openEditor(root, project, { onSave, toast }) {
       return;
     }
 
+    if (g.rotateOnTap && !g.moved) {
+      const found = findFurn(g.itemId);
+      if (found) found.item.rot = ((found.item.rot || 0) + 90) % 360;
+    }
     if (g.type === 'move' || g.type === 'vertex' || g.type === 'edge' || g.type === 'opening' || g.type === 'furniture' || g.type === 'furnEdge') {
       commit();
     } else if (g.type === 'tap' && !g.moved && tool === 'calib') {
