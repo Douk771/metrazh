@@ -92,6 +92,8 @@ button, input, select { font: inherit; color: inherit; }
   border-radius: 14px; box-shadow: 0 4px 18px rgba(0,0,0,.08); max-width: calc(100% - 24px); overflow-x: auto;
 }
 .tools .btn { border-color: transparent; min-width: 40px; padding: 0 10px; flex: none; }
+.tools .btn[data-tool] { flex-direction: column; gap: 1px; font-size: 12px; line-height: 1.15; padding-top: 4px; padding-bottom: 4px; }
+.tools .tool-ico { display: block; width: 18px; height: 18px; flex: none; }
 .tools.side-tools {
   left: auto; right: 12px; transform: none; bottom: auto; top: 12px; flex-direction: column;
 }
@@ -154,6 +156,7 @@ button, input, select { font: inherit; color: inherit; }
   .editor.sheet-open .panel { transform: translateY(0); }
   .tools { bottom: calc(12px + var(--safe-b)); gap: 2px; }
   .tools .btn { padding: 0 5px; min-width: 34px; font-size: 13px; }
+  .tools .btn[data-tool] { font-size: 11px; }
   .tools.side-tools { top: 10px; right: 8px; bottom: auto; }
   .hint { top: auto; bottom: calc(70px + var(--safe-b)); }
   .topbar { gap: 4px; padding-left: 6px; padding-right: 8px; }
@@ -337,5 +340,6 @@ a.btn { text-decoration: none; color: inherit; }
 .preset .nm { flex: 1 1 0; min-width: 0; font-weight: 500; overflow-wrap: anywhere; }
 .preset .sz { flex: 0 0 100%; font-size: 11px; color: var(--ink2); }
 .preset.sm { font-size: 12px; padding: 7px 9px; }
+.sanitary-choice { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .furn-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .furn-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: 13px; }

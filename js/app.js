@@ -43,8 +43,9 @@ async function renderList() {
       <p class="tagline">Планировки, фото и презентации объектов — прямо на телефоне.</p>
       ${showInstall ? `<div class="notice"><b>Добавьте на экран «Домой»</b>
         Нажмите «Поделиться» → «На экран Домой». Так приложение работает без интернета, а Safari не удалит ваши объекты.</div>` : ''}
-      ${!persisted && !showInstall ? `<div class="notice"><b>Данные хранятся в браузере</b>
-        Иногда браузер может очистить их сам. Делайте резервную копию важных объектов кнопкой «Копия».</div>` : ''}
+      ${!persisted && !showInstall ? `<div class="notice"><b>Объекты хранятся только на этом устройстве</b>
+        Браузер может удалить их при нехватке места или очистке данных. Чтобы не потерять работу, нажмите «Копия» на карточке
+        и сохраните файл в облако или отправьте себе. <a href="#/help/backup">Подробнее</a></div>` : ''}
       <div class="actions">
         <button class="btn primary" id="new">+ Новый объект</button>
         <label class="btn">Загрузить копию<input type="file" id="import" accept=".json,application/json" hidden></label>

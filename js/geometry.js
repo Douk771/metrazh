@@ -30,7 +30,7 @@ export const FURNITURE = {
   sink:     { label: 'Мойка',        w: 60,  h: 60,  kind: 'sink' },
   fridge:   { label: 'Холодильник',  w: 70,  h: 70,  kind: 'box' },
   toilet:   { label: 'Унитаз',       w: 60,  h: 50,  kind: 'toilet' },
-  bathTub:  { label: 'Ванна',        w: 170, h: 80,  kind: 'tub' },
+  bathTub:  { label: 'Ванна',        w: 180, h: 80,  kind: 'tub' },
   shower:   { label: 'Душ',          w: 90,  h: 90,  kind: 'shower' },
   washbasin:{ label: 'Раковина',     w: 60,  h: 45,  kind: 'sink' },
 };
@@ -51,12 +51,12 @@ export const ROOM_PRESETS = {
     furniture: [{ type: 'kitchen', anchor: 'corner' }],
   },
   combo: {
-    label: 'Санузел совмещённый', type: 'combo', w: 200, h: 200,
-    furniture: [{ type: 'toilet', anchor: 'right', gap: 5 }, { type: 'washbasin', anchor: 'bottom', gap: 5 }],
+    label: 'Совмещённый санузел', type: 'combo', w: 200, h: 200,
+    furniture: [{ type: 'toilet', anchor: 'right', gap: 5 }],
   },
   bath: {
     label: 'Ванная', type: 'bath', w: 200, h: 200,
-    furniture: [{ type: 'bathTub', anchor: 'top', gap: 5 }, { type: 'toilet', anchor: 'bottom', gap: 5 }],
+    furniture: [{ type: 'bathTub', anchor: 'top', gap: 5 }],
   },
   wc: {
     label: 'Туалет', type: 'wc', w: 120, h: 140,
@@ -156,6 +156,42 @@ export function summarize(rooms = []) {
 // Площадь комнаты с учётом ручной правки (если риелтор ввёл её сам).
 export function roomArea(room) {
   return room.areaOverride ?? areaM2(room.points);
+}
+
+function insidePolygon([x, y], points) {
+  let inside = false;
+  for (let i = 0, j = points.length - 1; i < points.length; j = i++) {
+    const [xi, yi] = points[i], [xj, yj] = points[j];
+    if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+// Куда поставить подпись комнаты размером boxW×boxH: в центр, а если там мебель —
+// в ближайшее место внутри комнаты, где мебель перекрывает подпись меньше всего.
+export function labelPos(room, boxW, boxH) {
+  const center = centroid(room.points);
+  const items = (room.furniture || []).map((f) => furnitureRect(room, f)).filter(Boolean);
+  const overlap = ([x, y]) => items.reduce((sum, r) => {
+    const w = Math.min(x + boxW / 2, r.x + r.w) - Math.max(x - boxW / 2, r.x);
+    const h = Math.min(y + boxH / 2, r.y + r.h) - Math.max(y - boxH / 2, r.y);
+    return sum + (w > 0 && h > 0 ? w * h : 0);
+  }, 0);
+  if (!overlap(center)) return center;
+  const fits = ([x, y]) => [[-1, -1], [1, -1], [1, 1], [-1, 1]]
+    .every(([sx, sy]) => insidePolygon([x + sx * boxW / 2, y + sy * boxH / 2], room.points));
+  const b = bounds(room.points);
+  const N = 12;
+  let best = center, bestOverlap = overlap(center), bestDist = 0;
+  for (let i = 0; i <= N; i++) {
+    for (let j = 0; j <= N; j++) {
+      const p = [b.minX + (b.maxX - b.minX) * i / N, b.minY + (b.maxY - b.minY) * j / N];
+      if (!fits(p)) continue;
+      const o = overlap(p), dist = Math.hypot(p[0] - center[0], p[1] - center[1]);
+      if (o < bestOverlap || (o === bestOverlap && dist < bestDist)) { best = p; bestOverlap = o; bestDist = dist; }
+    }
+  }
+  return best;
 }
 
 // Прямоугольник для мебели внутри комнаты с учётом примыкания к стене.

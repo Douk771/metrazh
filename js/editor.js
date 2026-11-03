@@ -2,7 +2,7 @@
 // Комната = внутренний контур; стена рисуется снаружи контура толщиной plan.wallCm.
 import {
   ROOM_TYPES, FURNITURE, ROOM_PRESETS, snap, centroid, bounds, asAxisRect, rectPoints,
-  edgeLength, fmtArea, fmtLen, summarize, roomArea, furnitureRect,
+  edgeLength, fmtArea, fmtLen, summarize, roomArea, furnitureRect, labelPos,
 } from './geometry.js';
 import { uid } from './db.js';
 import { renderPhoto, loadBitmap, canvasToBlob } from './watermark.js';
@@ -21,6 +21,27 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const pts = (points) => points.map((p) => p.join(',')).join(' ');
 const typeOf = (room) => ROOM_TYPES[room.type] || ROOM_TYPES.room;
 const roomName = (room) => room.name || typeOf(room).short;
+
+// Прикидка размера подписи: название и площадь в две строки.
+function roomLabelPos(room, fs) {
+  const chars = Math.max(roomName(room).length, fmtArea(roomArea(room)).length + 3);
+  return labelPos(room, (chars * 0.58 + 1) * fs, fs * 2.8);
+}
+
+const icon = (body) => `<svg class="tool-ico" viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor"
+  stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const TOOL_ICONS = {
+  select: icon('<path d="M10 2v16M2 10h16M7.5 4.5 10 2l2.5 2.5M7.5 15.5 10 18l2.5-2.5M4.5 7.5 2 10l2.5 2.5M15.5 7.5 18 10l-2.5 2.5"/>'),
+  rect: icon('<rect x="3" y="3" width="14" height="14"/><path d="M10 3v6M3 12h7"/>'),
+  plot: icon('<path d="M3 6l10-3 4 9-8 5-6-4z" stroke-dasharray="2.5 2.5"/>'),
+  door: icon('<path d="M2 17h4M4 17V3M4 3a14 14 0 0 1 13 14" /><path d="M9 17h9"/>'),
+  window: icon('<rect x="2" y="7" width="16" height="6"/><path d="M2 10h16"/>'),
+};
+const SANITARY_CHOICES = [
+  { keys: 'combo', label: 'Совмещённый', note: '2,0×2,0 м, с унитазом' },
+  { keys: 'wc,bath', label: 'Раздельный', note: 'туалет и ванная' },
+];
+const presetSize = (p) => [p.w, p.h].map((v) => (v / 100).toFixed(1).replace('.', ',')).join('×') + ' м';
 
 // Мебель рисуем примитивами: прямоугольник + подпись. Достаточно, чтобы понять расстановку.
 function furnitureMarkup(plan, px = () => 1, attrs = () => '') {
@@ -78,7 +99,7 @@ export function planSvg(plan) {
   const w = b.maxX - b.minX + pad * 2, h = b.maxY - b.minY + pad * 2;
   const fs = Math.max(w, h) / 38;
   const labels = plan.rooms.map((room) => {
-    const [cx, cy] = centroid(room.points);
+    const [cx, cy] = roomLabelPos(room, fs);
     return `<text x="${cx}" y="${cy}" text-anchor="middle" font-family="-apple-system, 'Segoe UI', Roboto, Arial, sans-serif"
       font-size="${fs}" fill="#1d2321"><tspan x="${cx}" dy="${-fs * 0.15}">${esc(roomName(room))}</tspan>
       <tspan x="${cx}" dy="${fs * 1.2}" font-weight="700">${fmtArea(roomArea(room))} м²</tspan></text>`;
@@ -100,6 +121,7 @@ export function openEditor(root, project, { onSave, toast }) {
   const underlayOn = () => !!(underlayUrl && project.underlay.visible !== false);
   let view = { x: 0, y: 0, s: 1 };
   let draft = null;        // точки строящегося контура
+  let sanitaryOpen = false; // открыт ли выбор совмещённого или раздельного санузла
   let hover = null;        // точка под курсором (для превью)
   let gesture = null;
   let pending = null;      // снимок до начала изменения
@@ -117,12 +139,11 @@ export function openEditor(root, project, { onSave, toast }) {
         <button class="sel-chip" id="sel-chip" hidden></button>
         <div class="hint" id="hint"></div>
         <div class="tools" role="toolbar">
-          <button class="btn" data-tool="select" title="Выбрать и двигать">Выбор</button>
-          <button class="btn" data-tool="rect" title="Прямоугольная комната">Комната</button>
-          <button class="btn" data-tool="poly" title="Комната произвольной формы">Контур</button>
-          <button class="btn" data-tool="plot" title="Границы участка — рисуются на заднем плане">Участок</button>
-          <button class="btn" data-tool="door" title="Поставить дверь на стену">Дверь</button>
-          <button class="btn" data-tool="window" title="Поставить окно на стену">Окно</button>
+          <button class="btn" data-tool="select" title="Выбрать и двигать">${TOOL_ICONS.select}Выбор</button>
+          <button class="btn" data-tool="rect" title="Прямоугольная комната">${TOOL_ICONS.rect}Комната</button>
+          <button class="btn" data-tool="plot" title="Границы участка — рисуются на заднем плане">${TOOL_ICONS.plot}Участок</button>
+          <button class="btn" data-tool="door" title="Поставить дверь на стену">${TOOL_ICONS.door}Дверь</button>
+          <button class="btn" data-tool="window" title="Поставить окно на стену">${TOOL_ICONS.window}Окно</button>
           <button class="btn primary" id="finish" hidden>Готово</button>
         </div>
         <div class="tools side-tools" role="toolbar" aria-label="История и вид">
@@ -353,7 +374,7 @@ export function openEditor(root, project, { onSave, toast }) {
     // подписи комнат
     const fs = px(13);
     for (const room of plan.rooms) {
-      const [cx, cy] = centroid(room.points);
+      const [cx, cy] = roomLabelPos(room, fs);
       html += `<text x="${cx}" y="${cy}" text-anchor="middle" font-size="${fs}" fill="#1d2321"
         stroke="#fffdf8" stroke-width="${px(3)}" paint-order="stroke" pointer-events="none">
         <tspan x="${cx}" dy="${-fs * 0.2}">${esc(roomName(room))}</tspan>
@@ -463,10 +484,6 @@ export function openEditor(root, project, { onSave, toast }) {
       if (!draft) return 'Нажимайте по углам участка. Заливка уйдёт под чертёж дома';
       return draft.length >= 3 ? 'Нажмите на первую точку, чтобы замкнуть участок' : 'Следующий угол участка…';
     }
-    if (tool === 'poly') {
-      if (!draft) return 'Нажимайте по очереди на углы комнаты';
-      return draft.length >= 3 ? 'Нажмите на первую точку или «Готово», чтобы замкнуть' : 'Следующий угол…';
-    }
     if (tool === 'calib') {
       return calib?.length ? 'Теперь нажмите на другой конец этой стены' : 'Нажмите на один конец стены, длину которой знаете';
     }
@@ -517,12 +534,22 @@ export function openEditor(root, project, { onSave, toast }) {
       <h2>Добавить комнату</h2>
       <p class="muted">Готовая комната встанет на план целиком — с мебелью. Потом её можно двигать и тянуть за стены.</p>
       <div class="presets">
-        ${Object.entries(ROOM_PRESETS).map(([k, p]) => `
+        ${Object.entries(ROOM_PRESETS).filter(([k]) => k !== 'bath' && k !== 'wc').map(([k, p]) => (k === 'combo' ? `
+          <button class="preset" data-sanitary aria-expanded="${sanitaryOpen}">
+            <span class="swatch" style="background:${ROOM_TYPES.combo.fill};border-color:${ROOM_TYPES.combo.tone}"></span>
+            <span class="nm">Санузел</span>
+            <span class="sz">совмещённый или раздельный</span>
+          </button>
+          ${sanitaryOpen ? `<div class="sanitary-choice">${SANITARY_CHOICES.map((c) => `
+            <button class="preset" data-preset="${c.keys}">
+              <span class="nm">${c.label}</span>
+              <span class="sz">${c.note}</span>
+            </button>`).join('')}</div>` : ''}` : `
           <button class="preset" data-preset="${k}">
             <span class="swatch" style="background:${ROOM_TYPES[p.type].fill};border-color:${ROOM_TYPES[p.type].tone}"></span>
             <span class="nm">${p.label}</span>
-            <span class="sz">${(p.w / 100).toFixed(1)}×${(p.h / 100).toFixed(1)} м</span>
-          </button>`).join('')}
+            <span class="sz">${presetSize(p)}</span>
+          </button>`)).join('')}
       </div>
 
       ${sel ? `<h2>Мебель в комнате</h2>
@@ -573,7 +600,7 @@ export function openEditor(root, project, { onSave, toast }) {
           <button class="btn" id="u-calib">Задать масштаб</button>
           <button class="btn danger" id="u-del">Убрать</button>
         </div>
-        <p class="muted">Или обведите комнаты сами поверх плана инструментами «Комната» и «Контур».</p>
+        <p class="muted">Или обведите комнаты сами поверх плана инструментом «Комната».</p>
       ` : `
         <p class="muted">Сфотографируйте план из техпаспорта ровно сверху — он ляжет под чертёж, и комнаты останется обвести.</p>
         <label class="btn">Загрузить фото плана<input type="file" id="u-file" accept="image/*" hidden></label>
@@ -586,8 +613,10 @@ export function openEditor(root, project, { onSave, toast }) {
       b.onclick = () => { selectedId = b.dataset.pick; selectedOpening = null; tool = 'select'; renderAll(); };
     });
     panel.querySelectorAll('[data-preset]').forEach((b) => {
-      b.onclick = () => addPreset(b.dataset.preset);
+      b.onclick = () => addPresets(b.dataset.preset.split(','));
     });
+    const sanitaryBtn = panel.querySelector('[data-sanitary]');
+    sanitaryBtn.onclick = () => { sanitaryOpen = !sanitaryOpen; renderPanel(); };
     panel.querySelectorAll('[data-furn-add]').forEach((b) => {
       b.onclick = () => addFurniture(b.dataset.furnRoom, b.dataset.furnAdd);
     });
@@ -670,23 +699,27 @@ export function openEditor(root, project, { onSave, toast }) {
     change(() => { plan.rooms.push(room); selectedId = room.id; });
     toast?.(`Комната ${fmtArea(roomArea(room))} м²`);
   }
-  // Ставим готовую комнату справа от уже нарисованных, вплотную через стену.
-  function addPreset(key) {
-    const preset = ROOM_PRESETS[key];
-    if (!preset) return;
-    const b = plan.rooms.length ? bounds(plan.rooms.flatMap((r) => r.points)) : { maxX: 0, minY: 0 };
-    const x = plan.rooms.length ? b.maxX + plan.wallCm : 0;
-    const y = plan.rooms.length ? b.minY : 0;
-    const room = {
-      id: uid(),
-      type: preset.type,
-      name: '',
-      points: rectPoints(x, y, preset.w, preset.h),
-      furniture: (preset.furniture || []).map((f) => ({ id: uid(), ...f })),
-    };
-    change(() => { plan.rooms.push(room); selectedId = room.id; });
+  // Ставим готовые комнаты справа от уже нарисованных, вплотную через стену.
+  function addPresets(keys) {
+    const b = plan.rooms.length ? bounds(plan.rooms.flatMap((r) => r.points)) : null;
+    let x = b ? b.maxX + plan.wallCm : 0;
+    const y = b ? b.minY : 0;
+    const rooms = keys.map((key) => {
+      const preset = ROOM_PRESETS[key];
+      const room = {
+        id: uid(),
+        type: preset.type,
+        name: '',
+        points: rectPoints(x, y, preset.w, preset.h),
+        furniture: (preset.furniture || []).map((f) => ({ id: uid(), ...f })),
+      };
+      x += preset.w + plan.wallCm;
+      return room;
+    });
+    sanitaryOpen = false;
+    change(() => { plan.rooms.push(...rooms); selectedId = rooms[rooms.length - 1].id; });
     fit();
-    toast?.(`${preset.label} — ${fmtArea(roomArea(room))} м²`);
+    toast?.(keys.map((k, i) => `${ROOM_PRESETS[k].label} — ${fmtArea(roomArea(rooms[i]))} м²`).join(', '));
   }
 
   function addFurniture(roomId, type) {
@@ -854,13 +887,10 @@ export function openEditor(root, project, { onSave, toast }) {
   }
   function finishDraft() {
     if (draft && draft.length >= 3) {
-      if (tool === 'plot') {
-        change(() => { plan.plot = draft.map((p) => [...p]); });
-        toast?.('Границы участка заданы');
-        setTool('select');
-        return;
-      }
-      addRoom(draft);
+      change(() => { plan.plot = draft.map((p) => [...p]); });
+      toast?.('Границы участка заданы');
+      setTool('select');
+      return;
     }
     draft = null;
     render();
@@ -956,7 +986,7 @@ export function openEditor(root, project, { onSave, toast }) {
     } else if (tool === 'rect') {
       const p = snapPt(w);
       gesture = { ...base, type: 'rect', start: p, end: p };
-    } else if (tool === 'poly' || tool === 'plot' || tool === 'door' || tool === 'window' || tool === 'calib') {
+    } else if (tool === 'plot' || tool === 'door' || tool === 'window' || tool === 'calib') {
       gesture = { ...base, type: 'tap', vx: view.x, vy: view.y };
     }
   });
@@ -1121,7 +1151,6 @@ export function openEditor(root, project, { onSave, toast }) {
       deleteSelected();
     } else if (e.key === 'v') setTool('select');
     else if (e.key === 'r') setTool('rect');
-    else if (e.key === 'p') setTool('poly');
     else if (e.key === 'd') setTool('door');
     else if (e.key === 'w') setTool('window');
   }

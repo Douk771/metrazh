@@ -13,12 +13,6 @@ const POSITIONS = [
   ['bl', 'Слева снизу'], [null], ['br', 'Справа снизу'],
 ];
 
-const canShareFiles = (() => {
-  try {
-    return !!navigator.canShare?.({ files: [new File([''], 'a.jpg', { type: 'image/jpeg' })] });
-  } catch { return false; }
-})();
-
 export function openPhotos(root, project, { onSave, toast }) {
   let photos = [];
   let mark = { ...DEFAULT_MARK };
@@ -45,7 +39,6 @@ export function openPhotos(root, project, { onSave, toast }) {
           <div class="photo-actions" id="exports" hidden>
             <button class="btn" id="dl-mark">Скачать с водяным знаком</button>
             <button class="btn" id="dl-clean">Скачать без знака</button>
-            ${canShareFiles ? '<button class="btn" id="share">Поделиться…</button>' : ''}
           </div>
           <div class="progress" id="progress" hidden></div>
           <div class="photo-grid" id="grid"></div>
@@ -226,21 +219,6 @@ export function openPhotos(root, project, { onSave, toast }) {
     }
   }
 
-  async function share() {
-    if (busy) return;
-    busy = true;
-    try {
-      const files = (await buildFiles(hasMark()))
-        .map((f) => new File([f.blob], `${safeName(project.name)} ${f.name}`, { type: 'image/jpeg' }));
-      await navigator.share({ files, title: project.name });
-    } catch (e) {
-      if (e?.name !== 'AbortError') toast('Не удалось поделиться — скачайте архивом');
-    } finally {
-      progress('');
-      busy = false;
-    }
-  }
-
   const hasMark = () => mark.enabled && (logo || mark.text.trim());
 
   // ---------- настройки знака ----------
@@ -365,7 +343,6 @@ export function openPhotos(root, project, { onSave, toast }) {
   $('#add').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
   $('#dl-mark').onclick = () => exportZip(true);
   $('#dl-clean').onclick = () => exportZip(false);
-  if (canShareFiles) $('#share').onclick = share;
 
   (async () => {
     const saved = await getSetting('mark', null);
