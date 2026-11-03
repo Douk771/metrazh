@@ -38,7 +38,7 @@ async function renderList() {
 
   app.innerHTML = `
     <main class="list-screen">
-      <div class="brand"><img src="icons/icon.svg" alt=""><h1>Метраж</h1>
+      <div class="brand"><h1>Метраж</h1>
         <a class="btn ghost help-btn" href="#/help" title="Как это работает" aria-label="Как это работает">?</a></div>
       <p class="tagline">Планировки, фото и презентации объектов — прямо на телефоне.</p>
       ${showInstall ? `<div class="notice"><b>Добавьте на экран «Домой»</b>
@@ -47,19 +47,21 @@ async function renderList() {
         Браузер может удалить их при нехватке места или очистке данных. Чтобы не потерять работу, нажмите «Копия» на карточке
         и сохраните файл в облако или отправьте себе. <a href="#/help/backup">Подробнее</a></div>` : ''}
       <div class="actions">
-        <button class="btn primary" id="new">+ Новый объект</button>
         <label class="btn">Загрузить копию<input type="file" id="import" accept=".json,application/json" hidden></label>
-        <button class="btn ghost" id="demo">Открыть пример</button>
+        <button class="btn" id="demo">Открыть пример</button>
       </div>
+      <div class="new-wrap"><button class="btn new-object" id="new">+ Новый объект</button></div>
       ${projects.length ? `<div class="cards">${projects.map((p, i) => card(p, counts[i])).join('')}</div>`
         : `<div class="empty">Пока нет объектов. Создайте первый или откройте пример, чтобы посмотреть, как всё выглядит.</div>`}
     </main>`;
 
   app.querySelector('#new').onclick = async () => {
-    const p = newProject();
+    const name = prompt('Адрес или название объекта', '');
+    if (name === null) return;
+    const p = newProject(name.trim() || undefined);
     await saveProject(p);
     requestPersistence();
-    location.hash = `#/p/${p.id}`;
+    location.hash = `#/p/${p.id}/photos`;
   };
   app.querySelector('#demo').onclick = async () => {
     const p = demoProject();

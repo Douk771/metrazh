@@ -6,7 +6,7 @@ import {
 import { DEFAULT_MARK, DEFAULT_ADJUST, PHOTO_MAX, THUMB_MAX, loadBitmap, renderPhoto, drawWatermark, prepareLogo, canvasToBlob, adjustFilter, drawAdjusted } from './watermark.js';
 import { makeZip } from './zip.js';
 import { canShareImages, createImageShare, imageFile } from './share.js';
-import { topbar, bindTopbar, esc } from './ui.js';
+import { topbar, bindTopbar, refreshScale, esc } from './ui.js';
 
 const POSITIONS = [
   ['tl', 'Слева сверху'], [null], ['tr', 'Справа сверху'],
@@ -61,6 +61,7 @@ export function openPhotos(root, project, { onSave, toast }) {
   }
 
   function renderGrid() {
+    refreshScale(root, project);
     $('#count').textContent = photos.length ? `${photos.length} фото` : '';
     $('#exports').hidden = !photos.length;
     const grid = $('#grid');

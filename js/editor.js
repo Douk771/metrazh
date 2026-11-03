@@ -8,7 +8,7 @@ import { uid } from './db.js';
 import { furnitureSymbol, furnitureIcon } from './furniture.js';
 import { renderPhoto, loadBitmap, canvasToBlob } from './watermark.js';
 import { detectRooms, estimateSkew } from './scan.js';
-import { topbar, bindTopbar } from './ui.js';
+import { topbar, bindTopbar, refreshScale } from './ui.js';
 import { OPENING_TYPES, openingsMarkup, openingMarkup, nearestEdge, snapT } from './openings.js';
 
 const STEP = 10;              // шаг привязки, см
@@ -198,6 +198,7 @@ export function openEditor(root, project, { onSave, toast }) {
     }
     pending = null;
     renderAll();
+    refreshScale(root, project);
   }
   function change(fn) { begin(); fn(); commit(); }
   function undo() {
