@@ -5,6 +5,7 @@ import {
 } from './db.js';
 import { DEFAULT_MARK, DEFAULT_ADJUST, PHOTO_MAX, THUMB_MAX, loadBitmap, renderPhoto, drawWatermark, prepareLogo, canvasToBlob, adjustFilter, drawAdjusted } from './watermark.js';
 import { makeZip } from './zip.js';
+import { canShareImages, createImageShare, imageFile } from './share.js';
 import { topbar, bindTopbar, esc } from './ui.js';
 
 const POSITIONS = [
@@ -39,6 +40,7 @@ export function openPhotos(root, project, { onSave, toast }) {
           <div class="photo-actions" id="exports" hidden>
             <button class="btn" id="dl-mark">Скачать с водяным знаком</button>
             <button class="btn" id="dl-clean">Скачать без знака</button>
+            ${canShareImages() ? '<button class="btn" id="share-photos">Сохранить или отправить</button>' : ''}
           </div>
           <div class="progress" id="progress" hidden></div>
           <div class="photo-grid" id="grid"></div>
@@ -96,6 +98,7 @@ export function openPhotos(root, project, { onSave, toast }) {
   }
 
   async function drawPreviews() {
+    imageShare?.reset();
     for (const el of root.querySelectorAll('.photo')) {
       const p = photos.find((x) => x.id === el.dataset.id);
       if (!p) continue;
@@ -343,6 +346,22 @@ export function openPhotos(root, project, { onSave, toast }) {
   $('#add').onchange = (e) => { addFiles([...e.target.files]); e.target.value = ''; };
   $('#dl-mark').onclick = () => exportZip(true);
   $('#dl-clean').onclick = () => exportZip(false);
+  const imageShare = $('#share-photos') && createImageShare({
+    button: $('#share-photos'),
+    title: project.name,
+    build: async () => (await buildFiles(hasMark()))
+      .map((f) => imageFile(`${safeName(project.name)} ${f.name}`, f.blob)),
+    toast,
+  });
+  if (imageShare) {
+    $('#share-photos').onclick = async () => {
+      if (busy) return;
+      busy = true;
+      let needZip = false;
+      try { needZip = await imageShare.run(); } catch { needZip = true; } finally { progress(''); busy = false; }
+      if (needZip) exportZip(!!hasMark());
+    };
+  }
 
   (async () => {
     const saved = await getSetting('mark', null);

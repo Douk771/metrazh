@@ -6,6 +6,7 @@ import { summarize, fmtArea, roomArea, ROOM_TYPES } from './geometry.js';
 import { planSvg } from './editor.js';
 import { makePdf } from './pdf.js';
 import { makeZip } from './zip.js';
+import { canShareImages, createImageShare, imageFile } from './share.js';
 import { topbar, bindTopbar, esc } from './ui.js';
 
 const W = 1240, H = 1754, MM = W / 210;      // A4 при 150 dpi
@@ -341,6 +342,7 @@ export function openPresentation(root, project, { onSave, toast }) {
   let closed = false;
   let timer = null;
   let busy = false;
+  const imageShares = [];
 
   root.innerHTML = `
     <div class="project-screen">
@@ -408,6 +410,7 @@ export function openPresentation(root, project, { onSave, toast }) {
   async function render() {
     const imgs = await photoBitmaps();
     if (closed) return;
+    imageShares.forEach((s) => s.reset());
     const d = { project, agent, logo, plan, photos: imgs, summary: summarize(project.plan.rooms) };
     pages = buildPages(d);
     const box = $('#pages');
@@ -455,19 +458,35 @@ export function openPresentation(root, project, { onSave, toast }) {
   $('#download').onclick = () => guarded(async () => {
     downloadBlob(await buildPdf(), `${safeName(project.name)}.pdf`);
   });
-  // Каждый лист отдельной картинкой, все одним архивом.
-  async function downloadImages(suffix, convert) {
+  // Каждый лист отдельной картинкой.
+  async function pageImages(convert) {
     const files = [];
     for (let i = 0; i < pages.length; i++) {
       progress(`Готовлю картинку ${i + 1} из ${pages.length}…`);
       const blob = await canvasToBlob(convert(pages[i]), 'image/jpeg', 0.9);
       files.push({ name: `${String(i + 1).padStart(2, '0')}.jpg`, blob });
     }
-    progress('Собираю архив…');
-    downloadBlob(await makeZip(files), `${safeName(project.name)} — ${suffix}.zip`);
+    return files;
   }
-  $('#images').onclick = () => guarded(() => downloadImages('листы', (page) => page));
-  $('#stories').onclick = () => guarded(() => downloadImages('сторис', storyPage));
+  // На телефоне — системное меню, на компьютере и если меню недоступно — архив.
+  function bindImages(id, suffix, convert) {
+    const share = canShareImages() ? createImageShare({
+      button: $(id),
+      title: project.name,
+      build: async () => (await pageImages(convert))
+        .map((f) => imageFile(`${safeName(project.name)} ${suffix} ${f.name}`, f.blob)),
+      toast,
+    }) : null;
+    if (share) imageShares.push(share);
+    $(id).onclick = () => guarded(async () => {
+      if (share && !(await share.run())) return;
+      const files = await pageImages(convert);
+      progress('Собираю архив…');
+      downloadBlob(await makeZip(files), `${safeName(project.name)} — ${suffix}.zip`);
+    });
+  }
+  bindImages('#images', 'листы', (page) => page);
+  bindImages('#stories', 'сторис', storyPage);
   if (canSharePdf) {
     $('#share').onclick = () => guarded(async () => {
       const file = new File([await buildPdf()], `${safeName(project.name)}.pdf`, { type: 'application/pdf' });
