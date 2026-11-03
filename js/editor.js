@@ -5,6 +5,7 @@ import {
   edgeLength, fmtArea, fmtLen, summarize, roomArea, furnitureRect, labelPos,
 } from './geometry.js';
 import { uid } from './db.js';
+import { furnitureSymbol, furnitureIcon } from './furniture.js';
 import { renderPhoto, loadBitmap, canvasToBlob } from './watermark.js';
 import { detectRooms, estimateSkew } from './scan.js';
 import { topbar, bindTopbar } from './ui.js';
@@ -43,25 +44,17 @@ const SANITARY_CHOICES = [
 ];
 const presetSize = (p) => [p.w, p.h].map((v) => (v / 100).toFixed(1).replace('.', ',')).join('×') + ' м';
 
-// Мебель рисуем примитивами: прямоугольник + подпись. Достаточно, чтобы понять расстановку.
+// Мебель: условный знак (вид сверху) поверх заливки комнаты.
 function furnitureMarkup(plan, px = () => 1, attrs = () => '') {
   let out = '';
   for (const room of plan.rooms) {
     for (const item of room.furniture || []) {
       const r = furnitureRect(room, item);
       if (!r) continue;
-      const tone = typeOf(room).tone || '#b4b0a2';
-      const common = `fill="${tone}" fill-opacity=".38" stroke="${tone}" stroke-width="${px(1.4)}" ${attrs(item, room)}`;
-      if (item.type === 'toilet' || item.type === 'washbasin') {
-        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        out += `<ellipse cx="${cx}" cy="${cy}" rx="${r.w / 2}" ry="${r.h / 2}" ${common}/>`;
-      } else if (item.type === 'round' || item.type === 'table') {
-        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
-        const rad = Math.min(r.w, r.h) / 2;
-        out += `<circle cx="${cx}" cy="${cy}" r="${rad}" ${common}/>`;
-      } else {
-        out += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" rx="${px(3)}" ${common}/>`;
-      }
+      const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+      out += `<g transform="translate(${cx} ${cy}) rotate(${r.rot}) translate(${-r.lw / 2} ${-r.lh / 2})" fill="#fffdf8"
+        stroke="#3a403d" stroke-width="${px(1.3)}" stroke-linejoin="round" ${attrs(item, room)}>
+        <rect width="${r.lw}" height="${r.lh}" fill="transparent" stroke="none"/>${furnitureSymbol(item.type, r.lw, r.lh)}</g>`;
     }
   }
   return out;
@@ -105,7 +98,7 @@ export function planSvg(plan) {
       <tspan x="${cx}" dy="${fs * 1.2}" font-weight="700">${fmtArea(roomArea(room))} м²</tspan></text>`;
   }).join('');
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${b.minX - pad} ${b.minY - pad} ${w} ${h}"
-    width="${w}" height="${h}">${plotMarkup(plan)}${wallsAndFills(plan)}${labels}</svg>`;
+    width="${w}" height="${h}">${plotMarkup(plan)}${wallsAndFills(plan, undefined, undefined, furnitureMarkup(plan, (n) => n * Math.max(w, h) / 700))}${labels}</svg>`;
   return { svg, width: w, height: h };
 }
 
@@ -115,6 +108,7 @@ export function openEditor(root, project, { onSave, toast }) {
   let tool = 'select';
   let selectedId = null;
   let selectedOpening = null;
+  let selectedFurn = null;
   let ghost = null;        // где встанет дверь/окно (превью под курсором)
   let calib = null;        // точки калибровки масштаба подложки
   let underlayUrl = project.underlay?.blob ? URL.createObjectURL(project.underlay.blob) : null;
@@ -162,6 +156,16 @@ export function openEditor(root, project, { onSave, toast }) {
   const panel = $('#panel');
   const hint = $('#hint');
 
+  // Выбранная мебель и комната, в которой она стоит.
+  function findFurn(id) {
+    if (!id) return null;
+    for (const room of plan.rooms) {
+      const item = room.furniture?.find((f) => f.id === id);
+      if (item) return { room, item };
+    }
+    return null;
+  }
+
   // ---------- сохранение и история ----------
   const snapshot = () => JSON.stringify({ rooms: plan.rooms, openings: plan.openings, wallCm: plan.wallCm, plot: plan.plot || null });
   function restore(json) {
@@ -172,6 +176,7 @@ export function openEditor(root, project, { onSave, toast }) {
     if (s.plot) plan.plot = s.plot; else delete plan.plot;
     if (!plan.rooms.some((r) => r.id === selectedId)) selectedId = null;
     if (!plan.openings.some((o) => o.id === selectedOpening)) selectedOpening = null;
+    if (!findFurn(selectedFurn)) selectedFurn = null;
   }
   function scheduleSave() {
     clearTimeout(saveTimer);
@@ -381,6 +386,18 @@ export function openEditor(root, project, { onSave, toast }) {
         <tspan x="${cx}" dy="${fs * 1.25}" font-weight="600">${fmtArea(roomArea(room))} м²</tspan></text>`;
     }
 
+    // выбранная мебель: рамка и размеры
+    const furnSel = findFurn(selectedFurn);
+    if (furnSel) {
+      const r = furnitureRect(furnSel.room, furnSel.item);
+      const dim = (x, y, value) => `<text x="${x}" y="${y}" text-anchor="middle" dominant-baseline="middle" font-size="${px(12)}"
+        fill="#a35a12" stroke="#faf7f1" stroke-width="${px(3)}" paint-order="stroke" pointer-events="none">${value} см</text>`;
+      html += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="none" stroke="#d9822b"
+        stroke-width="${px(2.5)}" stroke-dasharray="${px(7)} ${px(4)}" pointer-events="none"/>`
+        + dim(r.x + r.w / 2, r.y - px(12), Math.round(r.w))
+        + dim(r.x + r.w + px(24), r.y + r.h / 2, Math.round(r.h));
+    }
+
     // выбранная комната: обводка, размеры стен, ручки углов
     const sel = plan.rooms.find((x) => x.id === selectedId);
     if (sel) {
@@ -473,9 +490,14 @@ export function openEditor(root, project, { onSave, toast }) {
     const chip = $('#sel-chip');
     const selRoom = plan.rooms.find((x) => x.id === selectedId);
     const selOp = plan.openings.find((o) => o.id === selectedOpening);
-    chip.hidden = !(selRoom || selOp) || editorEl.classList.contains('sheet-open');
+    const selFurn = findFurn(selectedFurn);
+    chip.hidden = !(selRoom || selOp || selFurn) || editorEl.classList.contains('sheet-open');
     if (selRoom) chip.textContent = `${roomName(selRoom)} · ${fmtArea(roomArea(selRoom))} м² — изменить`;
     else if (selOp) chip.textContent = `${OPENING_TYPES[selOp.type]?.label || 'Проём'} ${selOp.width} см — изменить`;
+    else if (selFurn) {
+      const r = furnitureRect(selFurn.room, selFurn.item);
+      chip.textContent = `${FURNITURE[selFurn.item.type]?.label || 'Мебель'} ${r.lw}×${r.lh} см — изменить`;
+    }
   }
 
   function hintText() {
@@ -503,7 +525,23 @@ export function openEditor(root, project, { onSave, toast }) {
       .map(([k, t]) => `<option value="${k}" ${k === cur ? 'selected' : ''}>${t.label}</option>`).join('');
 
     const op = plan.openings.find((o) => o.id === selectedOpening);
+    const furnSel = findFurn(selectedFurn);
+    const furnRect = furnSel && furnitureRect(furnSel.room, furnSel.item);
+    const furnRoom = sel || furnSel?.room;
     panel.innerHTML = `
+      ${furnSel ? `
+        <h2>${FURNITURE[furnSel.item.type]?.label || 'Мебель'}</h2>
+        <div class="row">
+          <label class="field">Ширина, см<input id="f-w" type="number" inputmode="numeric" min="10" max="1000" step="1" value="${furnRect.lw}"></label>
+          <label class="field">Глубина, см<input id="f-h" type="number" inputmode="numeric" min="10" max="1000" step="1" value="${furnRect.lh}"></label>
+        </div>
+        <div class="row">
+          <button class="btn" id="f-rot">Повернуть на 90°</button>
+          ${furnSel.item.w != null || furnSel.item.h != null ? '<button class="btn" id="f-reset">Как в шаблоне</button>' : ''}
+        </div>
+        <p class="muted">Чтобы сдвинуть, потяните мебель по плану.</p>
+        <div class="row"><button class="btn danger" id="f-del">Удалить</button></div>
+      ` : ''}
       ${op ? `
         <h2>${OPENING_TYPES[op.type]?.label || 'Проём'}</h2>
         <label class="field">Тип<select id="o-type">${Object.entries(OPENING_TYPES)
@@ -552,16 +590,20 @@ export function openEditor(root, project, { onSave, toast }) {
           </button>`)).join('')}
       </div>
 
-      ${sel ? `<h2>Мебель в комнате</h2>
-        ${sel.furniture?.length ? `<ul class="furn-list">
-          ${sel.furniture.map((f) => `<li><span>${FURNITURE[f.type]?.label || 'Мебель'}</span>
-            <button class="btn ghost danger" data-furn-del="${f.id}">Убрать</button></li>`).join('')}
+      ${furnRoom ? `<h2>Мебель в комнате</h2>
+        ${furnRoom.furniture?.length ? `<ul class="furn-list">
+          ${furnRoom.furniture.map((f) => {
+            const r = furnitureRect(furnRoom, f);
+            return `<li><button class="pick" data-furn-pick="${f.id}" ${f.id === selectedFurn ? 'aria-current="true"' : ''}>${FURNITURE[f.type]?.label || 'Мебель'} <span class="muted">${r.lw}×${r.lh}</span></button>
+            <button class="btn ghost danger" data-furn-del="${f.id}">Убрать</button></li>`;
+          }).join('')}
         </ul>` : ''}
         <div class="presets">
           ${Object.entries(FURNITURE).map(([k, f]) => `
-            <button class="preset sm" data-furn-add="${k}" data-furn-room="${sel.id}">
+            <button class="preset sm" data-furn-add="${k}" data-furn-room="${furnRoom.id}">
+              ${furnitureIcon(k, f.w, f.h)}
               <span class="nm">${f.label}</span>
-              <span class="sz">${f.w}×${f.h}</span>
+              <span class="sz">${f.w}×${f.h} см</span>
             </button>`).join('')}
         </div>` : ''}
 
@@ -610,7 +652,7 @@ export function openEditor(root, project, { onSave, toast }) {
       <p class="muted">Площадь считается по внутреннему контуру комнаты, как в техпаспорте. Стены рисуются снаружи и в площадь не входят.</p>`;
 
     panel.querySelectorAll('[data-pick]').forEach((b) => {
-      b.onclick = () => { selectedId = b.dataset.pick; selectedOpening = null; tool = 'select'; renderAll(); };
+      b.onclick = () => { selectedId = b.dataset.pick; selectedOpening = null; selectedFurn = null; tool = 'select'; renderAll(); };
     });
     panel.querySelectorAll('[data-preset]').forEach((b) => {
       b.onclick = () => addPresets(b.dataset.preset.split(','));
@@ -622,10 +664,29 @@ export function openEditor(root, project, { onSave, toast }) {
     });
     panel.querySelectorAll('[data-furn-del]').forEach((b) => {
       b.onclick = () => {
-        change(() => { sel.furniture = sel.furniture.filter((f) => f.id !== b.dataset.furnDel); });
+        change(() => {
+          furnRoom.furniture = furnRoom.furniture.filter((f) => f.id !== b.dataset.furnDel);
+          if (selectedFurn === b.dataset.furnDel) { selectedFurn = null; selectedId = furnRoom.id; }
+        });
         renderAll();
       };
     });
+    panel.querySelectorAll('[data-furn-pick]').forEach((b) => {
+      b.onclick = () => { selectedFurn = b.dataset.furnPick; selectedId = null; selectedOpening = null; tool = 'select'; renderAll(); };
+    });
+    if (furnSel) {
+      const setSize = (key, e) => {
+        const v = Math.round(Number(e.target.value));
+        if (v >= 10 && v <= 1000) change(() => { furnSel.item[key] = v; });
+        renderAll();
+      };
+      $('#f-w').onchange = (e) => setSize('w', e);
+      $('#f-h').onchange = (e) => setSize('h', e);
+      $('#f-rot').onclick = () => { change(() => { furnSel.item.rot = ((furnSel.item.rot || 0) + 90) % 360; }); renderAll(); };
+      const reset = $('#f-reset');
+      if (reset) reset.onclick = () => { change(() => { delete furnSel.item.w; delete furnSel.item.h; }); renderAll(); };
+      $('#f-del').onclick = () => { deleteSelected(); renderAll(); };
+    }
     if (op) {
       $('#o-type').onchange = (e) => change(() => {
         const was = OPENING_TYPES[op.type];
@@ -696,7 +757,7 @@ export function openEditor(root, project, { onSave, toast }) {
   // ---------- действия ----------
   function addRoom(points) {
     const room = { id: uid(), type: 'room', name: '', points };
-    change(() => { plan.rooms.push(room); selectedId = room.id; });
+    change(() => { plan.rooms.push(room); selectedId = room.id; selectedOpening = null; selectedFurn = null; });
     toast?.(`Комната ${fmtArea(roomArea(room))} м²`);
   }
   // Ставим готовые комнаты справа от уже нарисованных, вплотную через стену.
@@ -717,7 +778,7 @@ export function openEditor(root, project, { onSave, toast }) {
       return room;
     });
     sanitaryOpen = false;
-    change(() => { plan.rooms.push(...rooms); selectedId = rooms[rooms.length - 1].id; });
+    change(() => { plan.rooms.push(...rooms); selectedId = rooms[rooms.length - 1].id; selectedFurn = null; });
     fit();
     toast?.(keys.map((k, i) => `${ROOM_PRESETS[k].label} — ${fmtArea(roomArea(rooms[i]))} м²`).join(', '));
   }
@@ -730,11 +791,23 @@ export function openEditor(root, project, { onSave, toast }) {
     change(() => {
       room.furniture ??= [];
       room.furniture.push(item);
-      selectedId = room.id;
+      selectedFurn = item.id;
+      selectedId = null;
+      selectedOpening = null;
     });
+    renderAll();
   }
 
   function deleteSelected() {
+    const furnSel = findFurn(selectedFurn);
+    if (furnSel) {
+      change(() => {
+        furnSel.room.furniture = furnSel.room.furniture.filter((f) => f.id !== selectedFurn);
+        selectedFurn = null;
+        selectedId = furnSel.room.id;
+      });
+      return;
+    }
     if (selectedOpening) {
       change(() => { plan.openings = plan.openings.filter((o) => o.id !== selectedOpening); selectedOpening = null; });
       return;
@@ -753,7 +826,7 @@ export function openEditor(root, project, { onSave, toast }) {
   }
   function addOpening(type, at) {
     const o = { id: uid(), type, ...at, width: OPENING_TYPES[type].width, swing: 'in', hinge: 'a' };
-    change(() => { plan.openings.push(o); selectedOpening = o.id; selectedId = null; });
+    change(() => { plan.openings.push(o); selectedOpening = o.id; selectedId = null; selectedFurn = null; });
   }
   async function setUnderlay(file) {
     const { blob, w, h } = await renderPhoto(file, { maxSide: 2400, quality: 0.9 });
@@ -844,7 +917,7 @@ export function openEditor(root, project, { onSave, toast }) {
         plan.rooms = found.map((r) => ({ id: uid(), type: guessType(r.points), name: '', points: r.points }));
         plan.openings = [];
         selectedId = null;
-        selectedOpening = null;
+        selectedOpening = null; selectedFurn = null;
       });
       scheduleSave();
       userMovedView = false;
@@ -900,7 +973,7 @@ export function openEditor(root, project, { onSave, toast }) {
     tool = t;
     ghost = null;
     calib = null;
-    if (t !== 'select') { selectedId = null; selectedOpening = null; }
+    if (t !== 'select') { selectedId = null; selectedOpening = null; selectedFurn = null; }
     renderAll();
   }
 
@@ -942,6 +1015,7 @@ export function openEditor(root, project, { onSave, toast }) {
       if (opEl) {
         selectedOpening = opEl.dataset.opening;
         selectedId = null;
+        selectedFurn = null;
         begin();
         gesture = { ...base, type: 'opening' };
         renderAll();
@@ -958,8 +1032,9 @@ export function openEditor(root, project, { onSave, toast }) {
         const room = plan.rooms.find((r) => r.id === furnEl.dataset.froom);
         const item = room?.furniture?.find((f) => f.id === furnEl.dataset.furn);
         if (item) {
-          selectedId = room.id;
+          selectedId = null;
           selectedOpening = null;
+          selectedFurn = item.id;
           // Если мебель привязана к стене, фиксируем её текущее положение центром.
           const r = furnitureRect(room, item);
           begin();
@@ -973,7 +1048,7 @@ export function openEditor(root, project, { onSave, toast }) {
       }
       const roomEl = e.target.closest('[data-room]');
       if (roomEl) {
-        selectedOpening = null;
+        selectedOpening = null; selectedFurn = null;
         selectedId = roomEl.dataset.room;
         const room = plan.rooms.find((r) => r.id === selectedId);
         begin();
@@ -981,7 +1056,7 @@ export function openEditor(root, project, { onSave, toast }) {
         renderAll();
         return;
       }
-      if (selectedId || selectedOpening) { selectedId = null; selectedOpening = null; renderAll(); }
+      if (selectedId || selectedOpening || selectedFurn) { selectedId = null; selectedOpening = null; selectedFurn = null; renderAll(); }
       gesture = { ...base, type: 'pan', vx: view.x, vy: view.y };
     } else if (tool === 'rect') {
       const p = snapPt(w);
@@ -1143,10 +1218,10 @@ export function openEditor(root, project, { onSave, toast }) {
     } else if (typing) {
       if (e.key === 'Enter') document.activeElement.blur();
     } else if (e.key === 'Escape') {
-      if (tool === 'calib') { setTool('select'); } else if (draft) { draft = null; render(); } else { selectedId = null; selectedOpening = null; renderAll(); }
+      if (tool === 'calib') { setTool('select'); } else if (draft) { draft = null; render(); } else { selectedId = null; selectedOpening = null; selectedFurn = null; renderAll(); }
     } else if (e.key === 'Enter' && draft) {
       finishDraft();
-    } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedId || selectedOpening)) {
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedId || selectedOpening || selectedFurn)) {
       e.preventDefault();
       deleteSelected();
     } else if (e.key === 'v') setTool('select');

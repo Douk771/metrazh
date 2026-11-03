@@ -20,8 +20,8 @@ export const ROOM_TYPES = {
 export const FURNITURE = {
   sofa:     { label: 'Диван',        w: 200, h: 90,  kind: 'box' },
   armchair: { label: 'Кресло',       w: 90,  h: 85,  kind: 'box' },
-  bed:      { label: 'Кровать',      w: 200, h: 160, kind: 'bed' },
-  bedSingle:{ label: 'Кровать 1-сп.', w: 200, h: 90, kind: 'bed' },
+  bed:      { label: 'Кровать',      w: 160, h: 200, kind: 'bed' },
+  bedSingle:{ label: 'Кровать 1-сп.', w: 90, h: 200, kind: 'bed' },
   wardrobe: { label: 'Шкаф',         w: 180, h: 60,  kind: 'box' },
   table:    { label: 'Стол',         w: 120, h: 80,  kind: 'round' },
   chairs:   { label: 'Стул',         w: 45,  h: 45,  kind: 'box' },
@@ -29,7 +29,7 @@ export const FURNITURE = {
   stove:    { label: 'Плита',        w: 60,  h: 60,  kind: 'stove' },
   sink:     { label: 'Мойка',        w: 60,  h: 60,  kind: 'sink' },
   fridge:   { label: 'Холодильник',  w: 70,  h: 70,  kind: 'box' },
-  toilet:   { label: 'Унитаз',       w: 60,  h: 50,  kind: 'toilet' },
+  toilet:   { label: 'Унитаз',       w: 50,  h: 60,  kind: 'toilet' },
   bathTub:  { label: 'Ванна',        w: 180, h: 80,  kind: 'tub' },
   shower:   { label: 'Душ',          w: 90,  h: 90,  kind: 'shower' },
   washbasin:{ label: 'Раковина',     w: 60,  h: 45,  kind: 'sink' },
@@ -40,11 +40,11 @@ export const FURNITURE = {
 export const ROOM_PRESETS = {
   living: {
     label: 'Жилая комната', type: 'living', w: 600, h: 300,
-    furniture: [{ type: 'sofa', anchor: 'left', gap: 5 }],
+    furniture: [{ type: 'sofa', anchor: 'left', gap: 5, rot: 270 }],
   },
   bedroom: {
     label: 'Спальня', type: 'bedroom', w: 600, h: 300,
-    furniture: [{ type: 'bed', anchor: 'left', gap: 5 }],
+    furniture: [{ type: 'bed', anchor: 'left', gap: 5, rot: 270 }],
   },
   kitchen: {
     label: 'Кухня', type: 'kitchen', w: 400, h: 300,
@@ -52,7 +52,7 @@ export const ROOM_PRESETS = {
   },
   combo: {
     label: 'Совмещённый санузел', type: 'combo', w: 200, h: 200,
-    furniture: [{ type: 'toilet', anchor: 'right', gap: 5 }],
+    furniture: [{ type: 'toilet', anchor: 'right', gap: 5, rot: 90 }],
   },
   bath: {
     label: 'Ванная', type: 'bath', w: 200, h: 200,
@@ -60,7 +60,7 @@ export const ROOM_PRESETS = {
   },
   wc: {
     label: 'Туалет', type: 'wc', w: 120, h: 140,
-    furniture: [{ type: 'toilet', anchor: 'left', gap: 5 }],
+    furniture: [{ type: 'toilet', anchor: 'left', gap: 5, rot: 270 }],
   },
   hall: {
     label: 'Коридор', type: 'hall', w: 200, h: 400,
@@ -200,13 +200,15 @@ export function furnitureRect(room, item) {
   if (!f) return null;
   const b = bounds(room.points);
   const [cx, cy] = centroid(room.points);
-  const w = f.w, h = f.h;
+  // lw×lh — собственный размер (ширина и глубина), w×h — место на плане с учётом поворота.
+  const lw = item.w ?? f.w, lh = item.h ?? f.h, rot = item.rot || 0;
+  const w = rot % 180 ? lh : lw, h = rot % 180 ? lw : lh;
   let x, y;
   if (item.x != null && item.y != null) {
     // Мебель уже двигали — используем сохранённые координаты (центр).
     x = item.x - w / 2;
     y = item.y - h / 2;
-    return { x, y, w, h };
+    return { x, y, w, h, lw, lh, rot };
   }
   const gap = item.gap ?? 5;
   switch (item.anchor) {
@@ -217,5 +219,5 @@ export function furnitureRect(room, item) {
     case 'corner': x = b.minX + gap;       y = b.minY + gap; break;
     default:       x = cx - w / 2;         y = cy - h / 2;
   }
-  return { x, y, w, h };
+  return { x, y, w, h, lw, lh, rot };
 }

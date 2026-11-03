@@ -343,3 +343,6 @@ a.btn { text-decoration: none; color: inherit; }
 .sanitary-choice { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
 .furn-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .furn-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: 13px; }
+.furn-list .pick { flex: 1 1 auto; min-width: 0; padding: 6px 8px; font: inherit; text-align: left; color: var(--ink); background: none; border: 0; border-radius: 8px; cursor: pointer; }
+.furn-list .pick[aria-current="true"] { background: var(--paper-2); font-weight: 600; }
+.furn-ico { flex: 0 0 auto; width: 26px; height: 26px; }
