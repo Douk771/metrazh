@@ -230,6 +230,43 @@ export function openEditor(root, project, { onSave, toast }) {
     if (sy != null) guides.push({ y: sy });
     return [sx ?? snap(p[0], STEP), sy ?? snap(p[1], STEP)];
   }
+  // Сдвиг стены параллельно самой себе: соседние стены удлиняются или укорачиваются.
+  // Прямая стена прилипает к соседям и к сетке, наклонная двигается шагом сетки.
+  function movedEdge(orig, i, rawDx, rawDy, excludeId) {
+    const n = orig.length;
+    const j = (i + 1) % n;
+    const a = orig[i], b = orig[j];
+    const len = edgeLength(a, b);
+    const nx = -(b[1] - a[1]) / len, ny = (b[0] - a[0]) / len;
+    const raw = rawDx * nx + rawDy * ny;
+    const others = orig.filter((_, k) => k !== i && k !== j);
+    const vertical = Math.abs(a[0] - b[0]) < 1, horizontal = Math.abs(a[1] - b[1]) < 1;
+
+    let d = snap(raw, STEP), guide = null;
+    guides = [];
+    if (vertical || horizontal) {
+      const near = bounds([a, b].map(([x, y]) => [x + nx * raw, y + ny * raw]));
+      const { xs, ys } = stickTargets(excludeId, others, near);
+      const k = vertical ? 0 : 1, sign = vertical ? nx : ny;
+      const pos = a[k] + sign * raw;
+      const stuck = nearest(pos, vertical ? xs : ys, STICK_PX / view.s);
+      d = ((stuck ?? snap(pos, STEP)) - a[k]) * sign;
+      if (stuck != null) guide = vertical ? { x: stuck } : { y: stuck };
+    }
+
+    // Соседние стены не должны вывернуться или стать короче минимума.
+    let lo = -Infinity, hi = Infinity;
+    for (const [from, to] of [[orig[(i - 1 + n) % n], a], [orig[(j + 1) % n], b]]) {
+      const along = (to[0] - from[0]) * nx + (to[1] - from[1]) * ny;
+      if (along >= 1) lo = Math.max(lo, Math.min(0, MIN_ROOM - along));
+      else if (along <= -1) hi = Math.min(hi, Math.max(0, -along - MIN_ROOM));
+    }
+    const clamped = Math.min(hi, Math.max(lo, d));
+    if (guide && clamped === d) guides.push(guide);
+    return orig.map((p, k) => (k === i || k === j
+      ? [Math.round(p[0] + nx * clamped), Math.round(p[1] + ny * clamped)]
+      : p));
+  }
   // Сдвиг комнаты целиком: шаг сетки, плюс доводка, чтобы стена встала вплотную к соседней.
   function snapMove(orig, rawDx, rawDy, excludeId) {
     let dx = snap(rawDx, STEP), dy = snap(rawDy, STEP);
@@ -339,6 +376,16 @@ export function openEditor(root, project, { onSave, toast }) {
         html += `<text x="${mx + nx * off}" y="${my + ny * off}" text-anchor="middle" dominant-baseline="middle"
           font-size="${px(12)}" fill="#a35a12" stroke="#faf7f1" stroke-width="${px(3)}" paint-order="stroke"
           pointer-events="none">${fmtLen(len)}</text>`;
+        if (tool !== 'select') return;
+        const hx = nx * plan.wallCm / 2, hy = ny * plan.wallCm / 2;
+        const cursor = Math.abs(a[0] - b[0]) < 1 ? 'ew-resize' : Math.abs(a[1] - b[1]) < 1 ? 'ns-resize' : 'move';
+        html += `<line x1="${a[0] + hx}" y1="${a[1] + hy}" x2="${b[0] + hx}" y2="${b[1] + hy}" stroke="transparent"
+          stroke-width="${Math.max(plan.wallCm, px(28))}" data-edge="${i}" style="cursor:${cursor}"/>`;
+        if (len * s >= 60) {
+          const angle = Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+          html += `<rect x="${mx - px(11)}" y="${my - px(3.5)}" width="${px(22)}" height="${px(7)}" rx="${px(3.5)}"
+            transform="rotate(${angle} ${mx} ${my})" fill="#fff" stroke="#d9822b" stroke-width="${px(2)}" pointer-events="none"/>`;
+        }
       });
       if (tool === 'select') {
         sel.points.forEach((p, i) => {
@@ -859,13 +906,21 @@ export function openEditor(root, project, { onSave, toast }) {
         gesture = { ...base, type: 'vertex', i: Number(v.dataset.vertex) };
         return;
       }
-      const opEl = e.target.closest('[data-opening]');
+      const edgeEl = e.target.closest('[data-edge]');
+      const opEl = e.target.closest('[data-opening]')
+        || (edgeEl && document.elementsFromPoint(e.clientX, e.clientY).map((el) => el.closest('[data-opening]')).find(Boolean));
       if (opEl) {
         selectedOpening = opEl.dataset.opening;
         selectedId = null;
         begin();
         gesture = { ...base, type: 'opening' };
         renderAll();
+        return;
+      }
+      if (edgeEl && selectedId) {
+        const room = plan.rooms.find((r) => r.id === selectedId);
+        begin();
+        gesture = { ...base, type: 'edge', i: Number(edgeEl.dataset.edge), start: w, orig: room.points.map((p) => [...p]) };
         return;
       }
       const furnEl = e.target.closest('[data-furn]');
@@ -964,6 +1019,12 @@ export function openEditor(root, project, { onSave, toast }) {
         room.points[gesture.i] = snapPt(w, room.id, room.points.filter((_, i) => i !== gesture.i));
         break;
       }
+      case 'edge': {
+        if (!gesture.moved) return;
+        const room = plan.rooms.find((r) => r.id === selectedId);
+        room.points = movedEdge(gesture.orig, gesture.i, w[0] - gesture.start[0], w[1] - gesture.start[1], room.id);
+        break;
+      }
       case 'rect':
         gesture.end = snapPt(w);
         break;
@@ -995,7 +1056,7 @@ export function openEditor(root, project, { onSave, toast }) {
       return;
     }
 
-    if (g.type === 'move' || g.type === 'vertex' || g.type === 'opening' || g.type === 'furniture') {
+    if (g.type === 'move' || g.type === 'vertex' || g.type === 'edge' || g.type === 'opening' || g.type === 'furniture') {
       commit();
     } else if (g.type === 'tap' && !g.moved && tool === 'calib') {
       calibrateTap(toWorld(e.clientX, e.clientY));
