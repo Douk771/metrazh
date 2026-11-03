@@ -9,3 +9,5 @@
 Справка — в самом приложении, кнопка «?».
 
 Локально: `python3 -m http.server 8765` → http://localhost:8765
+
+Планы и текущее состояние — в [docs/ROADMAP.md](docs/ROADMAP.md).
