@@ -83,6 +83,39 @@ export function adjustFilter(adj) {
   return `brightness(${b}%) contrast(${c}%) saturate(${s}%)`;
 }
 
+// Попиксельно те же формулы, что у CSS-фильтров: для браузеров без ctx.filter (Safari).
+export function applyAdjustPixels(ctx, w, h, adj) {
+  const b = 1 + (adj.brightness || 0) / 100;
+  const c = 1 + (adj.contrast || 0) / 100;
+  const s = 1 + (adj.saturation || 0) / 100;
+  const img = ctx.getImageData(0, 0, w, h);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const r = (d[i] * b - 127.5) * c + 127.5;
+    const g = (d[i + 1] * b - 127.5) * c + 127.5;
+    const v = (d[i + 2] * b - 127.5) * c + 127.5;
+    const gray = 0.2126 * r + 0.7152 * g + 0.0722 * v;
+    d[i] = gray + (r - gray) * s;
+    d[i + 1] = gray + (g - gray) * s;
+    d[i + 2] = gray + (v - gray) * s;
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// Рисует фото на canvas с учётом ползунков улучшения.
+export function drawAdjusted(ctx, src, w, h, adj) {
+  const f = adjustFilter(adj);
+  if (f === 'none') { ctx.drawImage(src, 0, 0, w, h); return; }
+  if ('filter' in ctx) {
+    ctx.filter = f;
+    ctx.drawImage(src, 0, 0, w, h);
+    ctx.filter = 'none';
+    return;
+  }
+  ctx.drawImage(src, 0, 0, w, h);
+  applyAdjustPixels(ctx, w, h, adj);
+}
+
 export async function renderPhoto(source, { maxSide = PHOTO_MAX, quality = 0.9, mark = null, logo = null, adjust = null } = {}) {
   const bmp = source instanceof Blob ? await loadBitmap(source) : source;
   const k = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
@@ -91,10 +124,7 @@ export async function renderPhoto(source, { maxSide = PHOTO_MAX, quality = 0.9, 
   canvas.height = Math.round(bmp.height * k);
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingQuality = 'high';
-  const f = adjustFilter(adjust);
-  if (f !== 'none') ctx.filter = f;
-  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  ctx.filter = 'none';
+  drawAdjusted(ctx, bmp, canvas.width, canvas.height, adjust);
   if (source instanceof Blob) bmp.close?.();
   drawWatermark(ctx, canvas.width, canvas.height, mark, logo);
   const blob = await canvasToBlob(canvas, 'image/jpeg', quality);

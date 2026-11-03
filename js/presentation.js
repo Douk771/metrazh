@@ -1,7 +1,7 @@
-// Вкладка «PDF»: презентация объекта для покупателя.
+// Вкладка «Презентация»: PDF объекта для покупателя.
 // Страницы рисуются на canvas (A4, 150 dpi) и собираются в PDF без библиотек.
 import { listPhotos, getSetting, setSetting, downloadBlob, safeName } from './db.js';
-import { DEFAULT_MARK, loadBitmap, renderPhoto, canvasToBlob } from './watermark.js';
+import { DEFAULT_MARK, DEFAULT_ADJUST, loadBitmap, renderPhoto, canvasToBlob } from './watermark.js';
 import { summarize, fmtArea, roomArea, ROOM_TYPES } from './geometry.js';
 import { planSvg } from './editor.js';
 import { makePdf } from './pdf.js';
@@ -251,6 +251,7 @@ async function svgToImage(svg) {
 export function openPresentation(root, project, { onSave, toast }) {
   let agent = { ...DEFAULT_AGENT };
   let mark = { ...DEFAULT_MARK };
+  let adjust = { ...DEFAULT_ADJUST };
   let logo = null;
   let photos = [];
   const photoCache = { true: null, false: null };   // со знаком / без
@@ -314,7 +315,7 @@ export function openPresentation(root, project, { onSave, toast }) {
     for (let i = 0; i < photos.length; i++) {
       progress(`Готовлю фото ${i + 1} из ${photos.length}…`);
       const { blob } = await renderPhoto(photos[i].blob, {
-        maxSide: 1600, quality: 0.92, mark: key === 'true' ? mark : null, logo,
+        maxSide: 1600, quality: 0.92, mark: key === 'true' ? mark : null, logo, adjust,
       });
       out.push(await loadBitmap(blob));
       if (closed) return out;
@@ -396,6 +397,7 @@ export function openPresentation(root, project, { onSave, toast }) {
     agent = { ...DEFAULT_AGENT, ...(await getSetting('agent', {})) };
     const savedMark = await getSetting('mark', null);
     if (savedMark) mark = { ...DEFAULT_MARK, ...savedMark };
+    adjust = { ...DEFAULT_ADJUST, ...(await getSetting('adjust', {})) };
     if (mark.logo) logo = await loadBitmap(mark.logo);
     photos = await listPhotos(project.id);
     const ps = planSvg(project.plan);

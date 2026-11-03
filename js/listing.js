@@ -1,5 +1,5 @@
 // Вкладка «Текст»: заголовок и описание для объявления, собранные из планировки и данных объекта.
-import { summarize, fmtArea, roomArea } from './geometry.js';
+import { summarize, fmtArea, roomArea, ROOM_TYPES } from './geometry.js';
 import { topbar, bindTopbar, esc } from './ui.js';
 
 function plural(n, one, few, many) {
@@ -18,7 +18,7 @@ export function listingFacts(project) {
   const rooms = project.plan.rooms;
   const s = summarize(rooms);
   const count = (...types) => rooms.filter((r) => types.includes(r.type)).length;
-  const living = rooms.filter((r) => r.type === 'room').map(roomArea).sort((a, b) => b - a);
+  const living = rooms.filter((r) => ROOM_TYPES[r.type]?.living).map(roomArea).sort((a, b) => b - a);
   return {
     s,
     living,

@@ -56,7 +56,7 @@ export const ROOM_PRESETS = {
   },
   bath: {
     label: 'Ванная', type: 'bath', w: 200, h: 200,
-    furniture: [{ type: 'bathTub', anchor: 'left', gap: 5 }, { type: 'toilet', anchor: 'right', gap: 5 }],
+    furniture: [{ type: 'bathTub', anchor: 'top', gap: 5 }, { type: 'toilet', anchor: 'bottom', gap: 5 }],
   },
   wc: {
     label: 'Туалет', type: 'wc', w: 120, h: 140,
@@ -137,25 +137,25 @@ export function fmtLen(cm) {
   return (cm / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Сводка по плану: общая, жилая, кухни, число жилых комнат.
+// Сводка, как в техпаспорте: общая площадь без летних помещений, жилая, кухня.
+// Каждую комнату округляем до 0,1 м², чтобы итог сходился с суммой подписей на плане.
 export function summarize(rooms = []) {
-  const s = { total: 0, living: 0, kitchen: 0, outdoor: 0, livingCount: 0, rooms: rooms.length };
-  for (const r of rooms) {
-    const a = roomArea(r);
-    const t = ROOM_TYPES[r.type] || ROOM_TYPES.room;
-    // Балконы и лоджии считаем отдельно — в общую площадь квартиры они не входят.
-    if (t.outdoor) { s.outdoor += a; continue; }
-    s.total += a;
-    if (t.living) { s.living += a; s.livingCount++; }
-    if (t.kitchen) s.kitchen += a;
+  const r = (x) => Math.round(x * 10) / 10;
+  let total = 0, living = 0, kitchen = 0, outdoor = 0, livingCount = 0;
+  for (const room of rooms) {
+    const a = r(roomArea(room));
+    const t = ROOM_TYPES[room.type] || ROOM_TYPES.room;
+    if (t.outdoor) { outdoor += a; continue; }
+    total += a;
+    if (t.living) { living += a; livingCount++; }
+    if (t.kitchen) kitchen += a;
   }
-  return s;
+  return { total: r(total), living: r(living), kitchen: r(kitchen), outdoor: r(outdoor), livingCount };
 }
 
 // Площадь комнаты с учётом ручной правки (если риелтор ввёл её сам).
 export function roomArea(room) {
-  if (room.areaOverride) return room.areaOverride;
-  return areaM2(room.points);
+  return room.areaOverride ?? areaM2(room.points);
 }
 
 // Прямоугольник для мебели внутри комнаты с учётом примыкания к стене.

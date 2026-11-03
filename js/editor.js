@@ -52,12 +52,12 @@ function plotMarkup(plan, px = () => 1) {
     stroke="#6f9c6a" stroke-width="${px(2.5)}" stroke-dasharray="${px(10)} ${px(6)}" stroke-linejoin="round"/>`;
 }
 
-function wallsAndFills(plan, attrs = () => '', openingOpts) {
+function wallsAndFills(plan, attrs = () => '', openingOpts, furniture = furnitureMarkup(plan)) {
   const walls = plan.rooms.map((r) =>
     `<polygon points="${pts(r.points)}" fill="none" stroke="#2b2f2d" stroke-width="${plan.wallCm * 2}" stroke-linejoin="miter"/>`).join('');
   const fills = plan.rooms.map((r) =>
     `<polygon points="${pts(r.points)}" fill="${typeOf(r).fill}" ${attrs(r)}/>`).join('');
-  return walls + fills + furnitureMarkup(plan) + openingsMarkup(plan, openingOpts);
+  return walls + fills + furniture + openingsMarkup(plan, openingOpts);
 }
 
 const allPoints = (plan) => plan.rooms.flatMap((r) => r.points).concat(plan.plot || []);
@@ -119,6 +119,7 @@ export function openEditor(root, project, { onSave, toast }) {
         <div class="tools" role="toolbar">
           <button class="btn" data-tool="select" title="Выбрать и двигать">Выбор</button>
           <button class="btn" data-tool="rect" title="Прямоугольная комната">Комната</button>
+          <button class="btn" data-tool="poly" title="Комната произвольной формы">Контур</button>
           <button class="btn" data-tool="plot" title="Границы участка — рисуются на заднем плане">Участок</button>
           <button class="btn" data-tool="door" title="Поставить дверь на стену">Дверь</button>
           <button class="btn" data-tool="window" title="Поставить окно на стену">Окно</button>
@@ -254,7 +255,7 @@ export function openEditor(root, project, { onSave, toast }) {
   function fit() {
     const r = svg.getBoundingClientRect();
     if (!r.width || !r.height) return;
-    const all = plan.rooms.flatMap((x) => x.points);
+    const all = plan.rooms.flatMap((x) => x.points).concat(plan.plot || []);
     if (underlayOn()) {
       const u = project.underlay;
       all.push([u.x, u.y], [u.x + u.w * u.scale, u.y + u.h * u.scale]);
@@ -306,10 +307,10 @@ export function openEditor(root, project, { onSave, toast }) {
         stroke-linejoin="round" pointer-events="none"/>`;
     }
     html += wallsAndFills(plan, (room) => `data-room="${room.id}" style="cursor:${tool === 'select' ? 'move' : 'crosshair'}"`,
-      (o) => ({ selected: o.id === selectedOpening, attrs: tool === 'select' ? `data-opening="${o.id}" style="cursor:ew-resize"` : '' }));
+      (o) => ({ selected: o.id === selectedOpening, attrs: tool === 'select' ? `data-opening="${o.id}" style="cursor:ew-resize"` : '' }),
+      furnitureMarkup(plan, px,
+        (item, room) => (tool === 'select' ? `data-furn="${item.id}" data-froom="${room.id}" style="cursor:grab"` : 'pointer-events="none"')));
     if (underlayOn()) html += '</g>';
-    html += furnitureMarkup(plan, px,
-      (item, room) => (tool === 'select' ? `data-furn="${item.id}" data-froom="${room.id}" style="cursor:grab"` : 'pointer-events:none'));
     if (ghost) html += openingMarkup(plan, ghost, { ghost: true });
 
     // подписи комнат
@@ -478,6 +479,10 @@ export function openEditor(root, project, { onSave, toast }) {
       </div>
 
       ${sel ? `<h2>Мебель в комнате</h2>
+        ${sel.furniture?.length ? `<ul class="furn-list">
+          ${sel.furniture.map((f) => `<li><span>${FURNITURE[f.type]?.label || 'Мебель'}</span>
+            <button class="btn ghost danger" data-furn-del="${f.id}">Убрать</button></li>`).join('')}
+        </ul>` : ''}
         <div class="presets">
           ${Object.entries(FURNITURE).map(([k, f]) => `
             <button class="preset sm" data-furn-add="${k}" data-furn-room="${sel.id}">
@@ -538,6 +543,12 @@ export function openEditor(root, project, { onSave, toast }) {
     });
     panel.querySelectorAll('[data-furn-add]').forEach((b) => {
       b.onclick = () => addFurniture(b.dataset.furnRoom, b.dataset.furnAdd);
+    });
+    panel.querySelectorAll('[data-furn-del]').forEach((b) => {
+      b.onclick = () => {
+        change(() => { sel.furniture = sel.furniture.filter((f) => f.id !== b.dataset.furnDel); });
+        renderAll();
+      };
     });
     if (op) {
       $('#o-type').onchange = (e) => change(() => {
@@ -799,15 +810,16 @@ export function openEditor(root, project, { onSave, toast }) {
       if (tool === 'plot') {
         change(() => { plan.plot = draft.map((p) => [...p]); });
         toast?.('Границы участка заданы');
-      } else {
-        addRoom(draft);
+        setTool('select');
+        return;
       }
+      addRoom(draft);
     }
     draft = null;
     render();
   }
   function setTool(t) {
-    if (t !== 'poly') draft = null;
+    if (t !== tool) draft = null;
     tool = t;
     ghost = null;
     calib = null;
@@ -880,7 +892,7 @@ export function openEditor(root, project, { onSave, toast }) {
         selectedId = roomEl.dataset.room;
         const room = plan.rooms.find((r) => r.id === selectedId);
         begin();
-        gesture = { ...base, type: 'move', start: w, orig: room.points.map((p) => [...p]) };
+        gesture = { ...base, type: 'move', start: w, orig: room.points.map((p) => [...p]), furn: (room.furniture || []).map((f) => [f, f.x, f.y]) };
         renderAll();
         return;
       }
@@ -934,6 +946,7 @@ export function openEditor(root, project, { onSave, toast }) {
         const room = plan.rooms.find((r) => r.id === selectedId);
         const [dx, dy] = snapMove(gesture.orig, w[0] - gesture.start[0], w[1] - gesture.start[1], selectedId);
         room.points = gesture.orig.map(([x, y]) => [x + dx, y + dy]);
+        for (const [f, x, y] of gesture.furn) if (x != null && y != null) { f.x = x + dx; f.y = y + dy; }
         break;
       }
       case 'furniture': {
@@ -982,7 +995,7 @@ export function openEditor(root, project, { onSave, toast }) {
       return;
     }
 
-    if (g.type === 'move' || g.type === 'vertex' || g.type === 'opening') {
+    if (g.type === 'move' || g.type === 'vertex' || g.type === 'opening' || g.type === 'furniture') {
       commit();
     } else if (g.type === 'tap' && !g.moved && tool === 'calib') {
       calibrateTap(toWorld(e.clientX, e.clientY));
