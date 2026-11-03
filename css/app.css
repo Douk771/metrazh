@@ -206,9 +206,9 @@ a.btn { text-decoration: none; color: inherit; }
 .tabs { display: flex; gap: 4px; flex: none; }
 .tabs a {
   padding: 7px 14px; border-radius: 14px; text-decoration: none; color: var(--ink); font-size: 15px; font-weight: 500;
-  opacity: .78;
+  opacity: .68;
 }
-.tabs a[aria-current="page"] { opacity: 1; font-weight: 700; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
+.tabs a[aria-current="page"] { opacity: 1; font-weight: 700; outline: 2.5px solid #fff; outline-offset: -2.5px; box-shadow: 0 2px 8px rgba(0,0,0,.28); }
 .tabs .tab-photos { background: var(--c-mist); }
 .tabs .tab-plan { background: var(--c-rose); }
 .tabs .tab-listing { background: var(--c-cream); }
@@ -335,7 +335,7 @@ a.btn.help-btn, .topbar a.btn.ghost { color: #fff; }
   .wordmark { margin-right: auto; }
   .scale-wrap { order: 10; }
   .topbar .name { order: 11; flex: 1 0 100%; }
-  .topbar .tabs { order: 12; flex: 1 0 100%; margin-top: -10px; }
+  .topbar .tabs { order: 12; flex: 1 0 100%; }
   .topbar .tabs a { flex: 1 1 auto; text-align: center; padding: 7px 4px; font-size: 13.5px; }
   .project-screen .topbar { position: static; }
 }
