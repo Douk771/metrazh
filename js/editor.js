@@ -256,6 +256,29 @@ export function openEditor(root, project, { onSave, toast }) {
     if (sy != null) guides.push({ y: sy });
     return [sx ?? snap(p[0], STEP), sy ?? snap(p[1], STEP)];
   }
+  // Тянем сторону мебели: противоположная остаётся на месте, размер меняется шагом 5 см,
+  // сторона прилипает к стенам комнаты.
+  function resizeFurniture({ room, item }, g, w) {
+    const { orig, side } = g;
+    const b = bounds(room.points);
+    const horizontal = side === 'l' || side === 'r';
+    const lo = horizontal ? orig.x : orig.y;
+    const hi = lo + (horizontal ? orig.w : orig.h);
+    const delta = horizontal ? w[0] - g.start[0] : w[1] - g.start[1];
+    const moving = side === 'l' || side === 't' ? lo : hi;
+    const walls = horizontal ? [b.minX, b.maxX] : [b.minY, b.maxY];
+    const stuck = nearest(moving + delta, walls, STICK_PX / view.s);
+    let size = side === 'l' || side === 't' ? hi - (stuck ?? moving + delta) : (stuck ?? moving + delta) - lo;
+    if (stuck == null) size = snap(size, 5);
+    size = Math.min(1000, Math.max(10, Math.round(size)));
+    const start = side === 'l' || side === 't' ? hi - size : lo;
+    // На плане ширина и глубина меняются местами, если мебель повёрнута на 90°.
+    const key = (orig.rot % 180 ? !horizontal : horizontal) ? 'w' : 'h';
+    item[key] = size;
+    item.x = horizontal ? start + size / 2 : orig.x + orig.w / 2;
+    item.y = horizontal ? orig.y + orig.h / 2 : start + size / 2;
+  }
+
   // Сдвиг стены параллельно самой себе: соседние стены удлиняются или укорачиваются.
   // Прямая стена прилипает к соседям и к сетке, наклонная двигается шагом сетки.
   function movedEdge(orig, i, rawDx, rawDy, excludeId) {
@@ -394,8 +417,30 @@ export function openEditor(root, project, { onSave, toast }) {
         fill="#a35a12" stroke="#faf7f1" stroke-width="${px(3)}" paint-order="stroke" pointer-events="none">${value} см</text>`;
       html += `<rect x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}" fill="none" stroke="#d9822b"
         stroke-width="${px(2.5)}" stroke-dasharray="${px(7)} ${px(4)}" pointer-events="none"/>`
-        + dim(r.x + r.w / 2, r.y - px(12), Math.round(r.w))
-        + dim(r.x + r.w + px(24), r.y + r.h / 2, Math.round(r.h));
+        + dim(r.x + r.w / 2, r.y - px(26), Math.round(r.w))
+        + dim(r.x + r.w + px(40), r.y + r.h / 2, Math.round(r.h));
+      if (tool === 'select') {
+        // Зона захвата лежит снаружи стороны: внутри мебель по-прежнему просто двигается.
+        const off = px(9), hit = px(18);
+        const sides = [
+          ['l', r.x - off, r.y, r.x - off, r.y + r.h, 'ew-resize'],
+          ['r', r.x + r.w + off, r.y, r.x + r.w + off, r.y + r.h, 'ew-resize'],
+          ['t', r.x, r.y - off, r.x + r.w, r.y - off, 'ns-resize'],
+          ['b', r.x, r.y + r.h + off, r.x + r.w, r.y + r.h + off, 'ns-resize'],
+        ];
+        for (const [side, x1, y1, x2, y2, cursor] of sides) {
+          html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="transparent" stroke-width="${hit}"
+            data-fedge="${side}" style="cursor:${cursor}"/>`;
+        }
+        const pill = (cx, cy, vertical) => {
+          const a = px(16), b = px(6);
+          const w = vertical ? b : a, h = vertical ? a : b;
+          return `<rect x="${cx - w / 2}" y="${cy - h / 2}" width="${w}" height="${h}" rx="${b / 2}" fill="#fff"
+            stroke="#d9822b" stroke-width="${px(2)}" pointer-events="none"/>`;
+        };
+        html += pill(r.x, r.y + r.h / 2, true) + pill(r.x + r.w, r.y + r.h / 2, true)
+          + pill(r.x + r.w / 2, r.y, false) + pill(r.x + r.w / 2, r.y + r.h, false);
+      }
     }
 
     // выбранная комната: обводка, размеры стен, ручки углов
@@ -1009,6 +1054,13 @@ export function openEditor(root, project, { onSave, toast }) {
         gesture = { ...base, type: 'vertex', i: Number(v.dataset.vertex) };
         return;
       }
+      const furnEdge = e.target.closest('[data-fedge]');
+      const sel = furnEdge && findFurn(selectedFurn);
+      if (sel) {
+        begin();
+        gesture = { ...base, type: 'furnEdge', side: furnEdge.dataset.fedge, start: w, orig: furnitureRect(sel.room, sel.item) };
+        return;
+      }
       const edgeEl = e.target.closest('[data-edge]');
       const opEl = e.target.closest('[data-opening]')
         || (edgeEl && document.elementsFromPoint(e.clientX, e.clientY).map((el) => el.closest('[data-opening]')).find(Boolean));
@@ -1109,6 +1161,12 @@ export function openEditor(root, project, { onSave, toast }) {
         for (const [f, x, y] of gesture.furn) if (x != null && y != null) { f.x = x + dx; f.y = y + dy; }
         break;
       }
+      case 'furnEdge': {
+        if (!gesture.moved) return;
+        const found = findFurn(selectedFurn);
+        if (found) resizeFurniture(found, gesture, w);
+        break;
+      }
       case 'furniture': {
         if (!gesture.moved) return;
         const room = plan.rooms.find((r) => r.id === gesture.roomId);
@@ -1161,7 +1219,7 @@ export function openEditor(root, project, { onSave, toast }) {
       return;
     }
 
-    if (g.type === 'move' || g.type === 'vertex' || g.type === 'edge' || g.type === 'opening' || g.type === 'furniture') {
+    if (g.type === 'move' || g.type === 'vertex' || g.type === 'edge' || g.type === 'opening' || g.type === 'furniture' || g.type === 'furnEdge') {
       commit();
     } else if (g.type === 'tap' && !g.moved && tool === 'calib') {
       calibrateTap(toWorld(e.clientX, e.clientY));
