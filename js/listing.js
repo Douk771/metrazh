@@ -9,6 +9,13 @@ function plural(n, one, few, many) {
   return many;
 }
 
+// Формы подачи объявления на площадках. Требуют входа в аккаунт риелтора.
+const SITES = [
+  { name: 'Авито', url: 'https://www.avito.ru/additem' },
+  { name: 'ЦИАН', url: 'https://www.cian.ru/razmestit-obyavlenie/' },
+  { name: 'Домклик', url: 'https://my.domclick.ru/offers/new' },
+];
+
 const NUM_WORDS = ['', 'одна', 'две', 'три', 'четыре', 'пять', 'шесть'];
 const list = (arr) => (arr.length < 2 ? arr.join('') : `${arr.slice(0, -1).join(', ')} и ${arr[arr.length - 1]}`);
 const int = (s) => { const n = parseInt(String(s || '').replace(/[^\d]/g, ''), 10); return Number.isFinite(n) && n > 0 ? n : null; };
@@ -90,6 +97,33 @@ export function listingBody(project) {
   return [lines.join(' '), desc].filter(Boolean).join('\n\n');
 }
 
+// Значения для отдельных полей формы на площадке. Пустые не показываем.
+export function listingFields(project) {
+  const f = listingFacts(project);
+  const price = int(project.price);
+  let bathroom = '';
+  if (f.combos && !f.baths && !f.wcs) bathroom = 'Совмещённый';
+  else if (f.baths && f.wcs && f.baths + f.wcs + f.combos === 2) bathroom = 'Раздельный';
+  else if (f.baths + f.wcs + f.combos) bathroom = String(f.baths + f.wcs + f.combos);
+  let rooms = '';
+  if (f.studio) rooms = 'Студия';
+  else if (f.s.livingCount) rooms = String(f.s.livingCount);
+  const area = (v) => (v ? fmtArea(v) : '');
+  return [
+    ['Адрес', (project.address || '').trim()],
+    ['Цена, ₽', price ? String(price) : ''],
+    ['Комнат', rooms],
+    ['Общая площадь, м²', area(f.s.total)],
+    ['Жилая площадь, м²', area(f.s.living)],
+    ['Кухня, м²', area(f.s.kitchen)],
+    ['Этаж', f.floor ? String(f.floor) : ''],
+    ['Этажей в доме', f.floors ? String(f.floors) : ''],
+    ['Санузел', bathroom],
+    ['Балкон', f.balconies ? String(f.balconies) : ''],
+    ['Лоджия', f.loggias ? String(f.loggias) : ''],
+  ].filter(([, value]) => value);
+}
+
 export function openListing(root, project, { onSave, toast }) {
   root.innerHTML = `
     <div class="project-screen">
@@ -110,9 +144,24 @@ export function openListing(root, project, { onSave, toast }) {
           </div>
         </section>
         <section class="listing-card">
+          <h2>Разместить на площадке</h2>
+          <p class="muted">Кнопка скопирует описание и откроет форму объявления в новой вкладке. На площадке нужно войти в свой аккаунт,
+            вставить описание и добавить фото. Публикуете объявление вы сами.</p>
+          <div class="site-links">
+            ${SITES.map((s) => `<a class="btn primary" data-site href="${s.url}" target="_blank" rel="noopener">${s.name}</a>`).join('')}
+          </div>
+        </section>
+        <section class="listing-card">
+          <h2>Поля для формы</h2>
+          <p class="muted">Нажмите на значение, чтобы скопировать его и вставить в поле на площадке.</p>
+          <div class="copy-fields" id="l-fields"></div>
+        </section>
+        <section class="listing-card">
           <h2>Ваш текст об объекте</h2>
           <p class="muted">Добавится в конец описания. Тот же текст попадает в PDF-презентацию.</p>
           <textarea id="l-desc" rows="5" placeholder="Ремонт, вид из окон, двор, транспорт, документы…">${esc(project.description || '')}</textarea>
+          <label class="field">Адрес<input id="l-address" value="${esc(project.address || '')}" placeholder="Город, улица, дом"></label>
+          <label class="field">Цена, ₽<input id="l-price" inputmode="numeric" value="${esc(project.price || '')}" placeholder="12 500 000"></label>
           <div class="row">
             <label class="field">Этаж<input id="l-floor" inputmode="numeric" value="${esc(project.floor || '')}"></label>
             <label class="field">Этажей в доме<input id="l-floors" inputmode="numeric" value="${esc(project.floors || '')}"></label>
@@ -132,6 +181,11 @@ export function openListing(root, project, { onSave, toast }) {
     $('#l-body').value = project.listing.body ?? listingBody(project);
     $('#l-reset').hidden = project.listing.title == null && project.listing.body == null;
     $('#l-count').textContent = `${$('#l-body').value.length} ${plural($('#l-body').value.length, 'символ', 'символа', 'символов')}`;
+    const fields = listingFields(project);
+    $('#l-fields').innerHTML = fields.length
+      ? fields.map(([label, value]) => `<button class="copy-field" data-value="${esc(value)}" title="Скопировать">
+          <span class="muted">${esc(label)}</span><b>${esc(value)}</b></button>`).join('')
+      : '<p class="muted">Заполните адрес, цену и этажи ниже или нарисуйте план, и здесь появятся значения.</p>';
   }
 
   $('#l-title').oninput = (e) => { project.listing.title = e.target.value; onSave(project); $('#l-reset').hidden = false; };
@@ -147,19 +201,41 @@ export function openListing(root, project, { onSave, toast }) {
   bind('#l-desc', 'description');
   bind('#l-floor', 'floor');
   bind('#l-floors', 'floors');
+  bind('#l-address', 'address');
+  bind('#l-price', 'price');
+
+  // Запасной способ для браузеров, где нет доступа к буферу обмена.
+  function legacyCopy(text) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
+  async function copy(text, done) {
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      ok = legacyCopy(text);
+    }
+    toast(ok ? done : 'Не удалось скопировать — выделите текст вручную');
+  }
 
   root.querySelectorAll('[data-copy]').forEach((b) => {
-    b.onclick = async () => {
-      const el = $(`#${b.dataset.copy}`);
-      try {
-        await navigator.clipboard.writeText(el.value);
-      } catch {
-        el.select();
-        document.execCommand('copy');
-      }
-      toast('Скопировано — вставьте в объявление');
-    };
+    b.onclick = () => copy($(`#${b.dataset.copy}`).value, 'Скопировано — вставьте в объявление');
   });
+  // Ссылка открывается сама, поэтому блокировщик всплывающих окон ей не мешает.
+  root.querySelectorAll('[data-site]').forEach((a) => {
+    a.onclick = () => { copy($('#l-body').value, 'Описание скопировано — вставьте его в форму'); };
+  });
+  $('#l-fields').onclick = (e) => {
+    const b = e.target.closest('[data-value]');
+    if (b) copy(b.dataset.value, `Скопировано: ${b.dataset.value}`);
+  };
 
   fill();
   return async function close() { await onSave(project); };
