@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Метраж — QR-код сайта</title>
+  <meta name="description" content="QR-код со ссылкой на сайт Метража: наведите камеру телефона.">
+  <meta name="theme-color" content="#4b635f">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #1f2b29;
+      background: linear-gradient(180deg, #4b635f 0%, #a39f8f 55%, #e3ccb9 100%) fixed #4b635f;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      min-height: 100vh; min-height: 100dvh;
+      padding: calc(12px + env(safe-area-inset-top, 0px)) 16px calc(16px + env(safe-area-inset-bottom, 0px));
+    }
+    canvas { display: block; width: min(92vw, 62vh, 480px); height: auto; border-radius: 28px; box-shadow: 0 18px 44px rgba(31,43,41,.35); }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+    .btn {
+      min-height: 44px; padding: 0 18px; border: 0; border-radius: 14px; font: inherit; font-weight: 600;
+      background: rgba(251,248,244,.92); color: #1f2b29; text-decoration: none; display: inline-flex; align-items: center; cursor: pointer;
+    }
+    .hint { margin: 0; color: #1f2b29; font-size: 14px; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="qr" width="1080" height="1350" role="img" aria-label="QR-код со ссылкой на metrazhpro.ru"></canvas>
+  <div class="actions">
+    <button class="btn" id="save">Сохранить картинку</button>
+    <a class="btn" href="about.html">О Метраже</a>
+  </div>
+  <p class="hint">Покажите экран: собеседник наводит камеру и попадает на сайт.</p>
+
+  <script type="module">
+    import { makeQr, drawStyledQr } from './js/qr.js';
+
+    const URL_TEXT = 'https://metrazhpro.ru/about';
+    const W = 1080, H = 1350;
+    const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif';
+    const canvas = document.getElementById('qr');
+    const ctx = canvas.getContext('2d');
+
+    const rounded = (x, y, w, h, r) => {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.arcTo(x + w, y, x + w, y + h, r);
+      ctx.arcTo(x + w, y + h, x, y + h, r);
+      ctx.arcTo(x, y + h, x, y, r);
+      ctx.arcTo(x, y, x + w, y, r);
+      ctx.closePath();
+    };
+
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#4b635f');
+    g.addColorStop(0.55, '#a39f8f');
+    g.addColorStop(1, '#e3ccb9');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `800 104px ${FONT}`;
+    ctx.fillText('Метраж', W / 2, 150);
+    ctx.font = `500 38px ${FONT}`;
+    ctx.fillText('планировки, фото и презентации для риелторов', W / 2, 212);
+
+    // Белая карточка с кодом.
+    const side = 780, cx = (W - side) / 2, cy = 270;
+    ctx.fillStyle = '#fbf8f4';
+    rounded(cx, cy, side, side, 48);
+    ctx.fill();
+    const hole = drawStyledQr(ctx, makeQr(URL_TEXT, { level: 'H' }), cx + 10, cy + 10, side - 20,
+      { color: '#2f4a47', eye: '#9a5e4c', background: '#fbf8f4' });
+
+    // Знак в центре — буква «М» на плашке цвета бренда.
+    const pad = hole.size * 0.08;
+    ctx.fillStyle = '#4b635f';
+    rounded(hole.x + pad, hole.y + pad, hole.size - pad * 2, hole.size - pad * 2, hole.size * 0.22);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `800 ${Math.round(hole.size * 0.62)}px ${FONT}`;
+    ctx.textBaseline = 'middle';
+    ctx.fillText('М', hole.x + hole.size / 2, hole.y + hole.size / 2 + hole.size * 0.04);
+    ctx.textBaseline = 'alphabetic';
+
+    ctx.fillStyle = '#1f2b29';
+    ctx.font = `800 64px ${FONT}`;
+    ctx.fillText('metrazhpro.ru', W / 2, cy + side + 112);
+    ctx.font = `400 34px ${FONT}`;
+    ctx.fillText('Наведите камеру телефона', W / 2, cy + side + 172);
+
+    // Сохранить: на телефоне — через меню, иначе — скачать файл.
+    document.getElementById('save').onclick = async () => {
+      const blob = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+      const file = new File([blob], 'metrazh-qr.png', { type: 'image/png' });
+      try {
+        if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ files: [file], title: 'Метраж' });
+          return;
+        }
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'metrazh-qr.png';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    };
+  </script>
+</body>
+</html>

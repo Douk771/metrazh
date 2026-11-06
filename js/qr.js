@@ -1,10 +1,20 @@
-// Генератор QR-кода без библиотек: байтовый режим, коррекция ошибок уровня M.
-// makeQr(text) возвращает { size, get(x, y) }; get даёт true для тёмного модуля.
+// Генератор QR-кода без библиотек: байтовый режим, коррекция ошибок уровня M или H.
+// makeQr(text, { level }) возвращает { size, get(x, y) }; get даёт true для тёмного модуля.
+// Уровень H восстанавливает до 30% кода — на него можно положить логотип в центре.
 
-// По таблицам стандарта ISO/IEC 18004 для уровня M, индекс — номер версии.
-const ECC_PER_BLOCK = [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28];
-const NUM_BLOCKS = [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49];
-const LEVEL_M_BITS = 0;
+// По таблицам стандарта ISO/IEC 18004, индекс — номер версии.
+const LEVELS = {
+  M: {
+    bits: 0,
+    ecc: [0, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+    blocks: [0, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+  },
+  H: {
+    bits: 2,
+    ecc: [0, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    blocks: [0, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81],
+  },
+};
 
 function rawDataModules(ver) {
   let n = (16 * ver + 128) * ver + 64;
@@ -15,7 +25,7 @@ function rawDataModules(ver) {
   }
   return n;
 }
-const dataCodewords = (ver) => Math.floor(rawDataModules(ver) / 8) - ECC_PER_BLOCK[ver] * NUM_BLOCKS[ver];
+const dataCodewords = (ver, L) => Math.floor(rawDataModules(ver) / 8) - L.ecc[ver] * L.blocks[ver];
 
 // Арифметика в поле GF(256) с многочленом 0x11D.
 function gfMul(a, b) {
@@ -51,13 +61,13 @@ function rsRemainder(data, divisor) {
   return out;
 }
 
-function encodeData(bytes, ver) {
+function encodeData(bytes, ver, L) {
   const bits = [];
   const put = (value, length) => { for (let i = length - 1; i >= 0; i--) bits.push((value >>> i) & 1); };
   put(0b0100, 4);
   put(bytes.length, ver <= 9 ? 8 : 16);
   bytes.forEach((b) => put(b, 8));
-  const capacity = dataCodewords(ver) * 8;
+  const capacity = dataCodewords(ver, L) * 8;
   put(0, Math.min(4, capacity - bits.length));
   put(0, (8 - bits.length % 8) % 8);
   for (let pad = 0xec; bits.length < capacity; pad ^= 0xec ^ 0x11) put(pad, 8);
@@ -66,8 +76,8 @@ function encodeData(bytes, ver) {
   return out;
 }
 
-function withErrorCorrection(data, ver) {
-  const blocksTotal = NUM_BLOCKS[ver], ecc = ECC_PER_BLOCK[ver];
+function withErrorCorrection(data, ver, L) {
+  const blocksTotal = L.blocks[ver], ecc = L.ecc[ver];
   const rawCodewords = Math.floor(rawDataModules(ver) / 8);
   const shortBlocks = blocksTotal - rawCodewords % blocksTotal;
   const shortLen = Math.floor(rawCodewords / blocksTotal);
@@ -135,10 +145,11 @@ function penalty(m, size) {
   return score + Math.floor(Math.abs(dark * 20 / (size * size) - 10)) * 10;
 }
 
-export function makeQr(text) {
+export function makeQr(text, { level = 'M' } = {}) {
+  const L = LEVELS[level];
   const bytes = [...new TextEncoder().encode(text)];
   let ver = 1;
-  while (ver <= 40 && bytes.length + (ver <= 9 ? 2 : 3) > dataCodewords(ver)) ver++;
+  while (ver <= 40 && bytes.length + (ver <= 9 ? 2 : 3) > dataCodewords(ver, L)) ver++;
   if (ver > 40) throw new Error('Слишком много данных для QR-кода');
 
   const size = ver * 4 + 17;
@@ -173,7 +184,7 @@ export function makeQr(text) {
   });
 
   const drawFormat = (m, mask) => {
-    const data = (LEVEL_M_BITS << 3) | mask;
+    const data = (L.bits << 3) | mask;
     let rem = data;
     for (let i = 0; i < 10; i++) rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
     const bits = ((data << 10) | rem) ^ 0x5412;
@@ -203,7 +214,7 @@ export function makeQr(text) {
   }
 
   // Данные укладываются зигзагом снизу справа.
-  const codewords = withErrorCorrection(encodeData(bytes, ver), ver);
+  const codewords = withErrorCorrection(encodeData(bytes, ver, L), ver, L);
   let bitIndex = 0;
   for (let right = size - 1; right >= 1; right -= 2) {
     if (right === 6) right = 5;
@@ -251,4 +262,52 @@ export function drawQr(ctx, qr, x, y, side) {
       if (qr.get(col, row)) ctx.fillRect(x + offset + col * cell, y + offset + row * cell, cell, cell);
     }
   }
+}
+
+// Стилизованный код: точки вместо квадратов, скруглённые «глазки» в углах и пустое место в центре под логотип.
+// Рисовать только с уровнем H: центр перекрывает часть модулей. Возвращает квадрат центра в пикселях.
+export function drawStyledQr(ctx, qr, x, y, side, { color = '#2f4a47', eye = color, background = '#ffffff' } = {}) {
+  const n = qr.size;
+  const cell = side / (n + 8);
+  const ox = x + cell * 4, oy = y + cell * 4;
+  ctx.fillStyle = background;
+  ctx.fillRect(x, y, side, side);
+
+  const hole = Math.max(5, Math.round(n * 0.22) | 1);
+  const h0 = (n - hole) / 2;
+  const inFinder = (c, r) => (r < 8 && c < 8) || (r < 8 && c >= n - 8) || (r >= n - 8 && c < 8);
+  const inHole = (c, r) => c >= h0 && c < h0 + hole && r >= h0 && r < h0 + hole;
+
+  ctx.fillStyle = color;
+  for (let r = 0; r < n; r++) {
+    for (let c = 0; c < n; c++) {
+      if (!qr.get(c, r) || inFinder(c, r) || inHole(c, r)) continue;
+      ctx.beginPath();
+      ctx.arc(ox + (c + 0.5) * cell, oy + (r + 0.5) * cell, cell * 0.43, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  const rounded = (px, py, w, rad) => {
+    ctx.beginPath();
+    ctx.moveTo(px + rad, py);
+    ctx.arcTo(px + w, py, px + w, py + w, rad);
+    ctx.arcTo(px + w, py + w, px, py + w, rad);
+    ctx.arcTo(px, py + w, px, py, rad);
+    ctx.arcTo(px, py, px + w, py, rad);
+    ctx.closePath();
+  };
+  for (const [c, r] of [[0, 0], [n - 7, 0], [0, n - 7]]) {
+    const px = ox + c * cell, py = oy + r * cell;
+    ctx.fillStyle = color;
+    rounded(px, py, cell * 7, cell * 2.2);
+    ctx.fill();
+    ctx.fillStyle = background;
+    rounded(px + cell, py + cell, cell * 5, cell * 1.5);
+    ctx.fill();
+    ctx.fillStyle = eye;
+    rounded(px + cell * 2, py + cell * 2, cell * 3, cell * 1);
+    ctx.fill();
+  }
+  return { x: ox + h0 * cell, y: oy + h0 * cell, size: hole * cell };
 }
