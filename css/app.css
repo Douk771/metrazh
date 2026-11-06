@@ -419,3 +419,5 @@ a.btn.primary { color: var(--accent-ink); }
 }
 .copy-field:hover, .copy-field:focus-visible { border-color: var(--accent); }
 .copy-field .muted { font-size: 12px; }
+
+.tagline a { color: #fff; font-weight: 600; white-space: nowrap; }

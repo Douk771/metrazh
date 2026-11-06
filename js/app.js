@@ -42,7 +42,7 @@ async function renderList() {
       <div class="brand"><h1>Метраж</h1>
         <a class="btn ghost help-btn" href="#/help" title="Как это работает" aria-label="Как это работает">?</a>
         <a class="btn ghost menu-btn" href="#/card" title="Моя визитка" aria-label="Моя визитка">☰</a></div>
-      <p class="tagline">Планировки, фото и презентации объектов — прямо на телефоне.</p>
+      <p class="tagline">Планировки, фото и презентации объектов — прямо на телефоне. <a href="about.html">Что умеет Метраж →</a></p>
       ${showInstall ? `<div class="notice"><b>Добавьте на экран «Домой»</b>
         Нажмите «Поделиться» → «На экран Домой». Так приложение работает без интернета, а Safari не удалит ваши объекты.</div>` : ''}
       ${!persisted && !showInstall ? `<div class="notice"><b>Объекты хранятся только на этом устройстве</b>
